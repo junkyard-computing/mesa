@@ -80,6 +80,10 @@ const struct pan_model pan_model_list[] = {
                                               MODEL_RATES(2, 4,  32)),
    VALHALL_MODEL(PAN_PROD_ID(10, 8, 7), 0, "G610",   "TVIx", MODEL_ANISO(ALL),  MODEL_TB_SIZES(32768, 16384),
                                               MODEL_RATES(4, 8,  64)),
+   /* Pixel Fold (felix / Tensor G2): gpu_id 0xa862, Valhall arch 10.8, prod 2.
+    * Same arch-level model params as G610 (G710 is G610 with more cores). */
+   VALHALL_MODEL(PAN_PROD_ID(10, 8, 2), 0, "G710",   "TVIx", MODEL_ANISO(ALL),  MODEL_TB_SIZES(32768, 16384),
+                                              MODEL_RATES(4, 8,  64)),
    VALHALL_MODEL(PAN_PROD_ID(10, 12, 4), 0, "G310v1",   "TVAx", MODEL_ANISO(ALL),  MODEL_TB_SIZES(16384,  8192),
                                               MODEL_RATES(2, 2,  16)),
    VALHALL_MODEL(PAN_PROD_ID(10, 12, 4), 1, "G310v2",   "TVAx", MODEL_ANISO(ALL),  MODEL_TB_SIZES(16384,  8192),
