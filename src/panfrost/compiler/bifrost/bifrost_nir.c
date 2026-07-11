@@ -200,10 +200,56 @@ mem_vectorize_cb(unsigned align_mul, unsigned align_offset, unsigned bit_size,
    return bytes <= combined_align && bytes <= max_bytes;
 }
 
+/* Register-pressure-aware unrolling.
+ *
+ * A SPIR-V `Unroll` LoopControl hint (e.g. from a GLSL [[unroll]]) forces
+ * nir_opt_loop_unroll to fully unroll the loop regardless of cost. On Valhall's
+ * small (64-entry) register file that turns a large register-blocked GEMM into a
+ * spill storm (e.g. llama.cpp's mul_mm: 1252 spills, ~8x slowdown). Demote the
+ * forced hint to `none` so NIR's own cost model (instr_cost * trip_count vs a
+ * limit) decides instead: small loops still unroll, register-heavy ones stay
+ * rolled. This mirrors the behaviour of the closed Mali driver, which is
+ * insensitive to the hint. Gated by an env var for A/B measurement. */
+static void
+bi_demote_forced_unroll_cf(struct exec_list *cf_list)
+{
+   foreach_list_typed(nir_cf_node, node, node, cf_list) {
+      switch (node->type) {
+      case nir_cf_node_loop: {
+         nir_loop *loop = nir_cf_node_as_loop(node);
+         if (loop->control == nir_loop_control_unroll)
+            loop->control = nir_loop_control_none;
+         bi_demote_forced_unroll_cf(&loop->body);
+         break;
+      }
+      case nir_cf_node_if: {
+         nir_if *nif = nir_cf_node_as_if(node);
+         bi_demote_forced_unroll_cf(&nif->then_list);
+         bi_demote_forced_unroll_cf(&nif->else_list);
+         break;
+      }
+      default:
+         break;
+      }
+   }
+}
+
+static void
+bi_demote_forced_unroll(nir_shader *nir)
+{
+   if (!debug_get_bool_option("PAN_PRESSURE_UNROLL", false))
+      return;
+
+   nir_foreach_function_impl(impl, nir)
+      bi_demote_forced_unroll_cf(&impl->body);
+}
+
 static void
 bi_optimize_loop(nir_shader *nir, uint64_t gpu_id, bool allow_copies)
 {
    bool progress;
+
+   bi_demote_forced_unroll(nir);
 
    do {
       progress = false;
