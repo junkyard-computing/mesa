@@ -154,8 +154,19 @@ panthor_dev_query_props(struct panthor_kmod_dev *panthor_dev)
 {
    struct pan_kmod_dev_props *props = &panthor_dev->base.props;
 
+   /* The panthor uapi defines gpu_id with the arch nibbles in bits [31:16]
+    * (DRM_PANTHOR_ARCH_MAJOR(x) == (x) >> 28), which is what pan_arch()/
+    * pan_prod_id() decode. The gs201 (Pixel Fold / felix) panthor kernel
+    * reports it in a compact form with those nibbles in bits [15:0] instead
+    * (e.g. Mali-G710 as 0xa862 rather than 0xa862_0000), which decodes to
+    * arch 0 and fails model lookup. Detect the compact form (empty high half)
+    * and expand it so the standard decode path works. */
+   uint64_t gpu_id = panthor_dev->props.gpu.gpu_id;
+   if (gpu_id != 0 && (gpu_id >> 16) == 0)
+      gpu_id <<= 16;
+
    *props = (struct pan_kmod_dev_props){
-      .gpu_id = panthor_dev->props.gpu.gpu_id,
+      .gpu_id = gpu_id,
       .gpu_variant = panthor_dev->props.gpu.core_features & 0xff,
       .shader_present = panthor_dev->props.gpu.shader_present,
       .tiler_features = panthor_dev->props.gpu.tiler_features,
