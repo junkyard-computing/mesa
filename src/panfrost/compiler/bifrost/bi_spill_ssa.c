@@ -222,6 +222,15 @@ struct spill_ctx {
     * value.
     */
    dist_t cmp_dist_min_remat_dst;
+
+   /* Opportunistic reg-sourced rematerialization (PAN_REMAT_REG): when a
+    * spilled value's def is a cheap reg-sourced ALU op (e.g. an address
+    * IADD_IMM) whose register source is still live in W at the reload point,
+    * recompute it instead of loading from scratch. Purely a reload-time
+    * choice: it changes no spill/eviction decision, so the memory copy always
+    * still exists as a fallback. Targets dequant kernels drowning in .i32.tl
+    * fills of recomputable address/index values. */
+   bool remat_reg;
 };
 
 static inline struct spill_block *
@@ -427,6 +436,36 @@ insert_spill(bi_builder *b, struct spill_ctx *ctx, unsigned node)
    }
 }
 
+/* Cheap reg-sourced ALU ops we can recompute at a reload point provided their
+ * register source is available there. Deliberately narrow: single reg source
+ * plus an immediate (address/index offset arithmetic), which is what dominates
+ * the fills in quantized-weight dequant kernels. */
+static bool
+can_remat_reg(bi_instr *I)
+{
+   switch (I->op) {
+   case BI_OPCODE_IADD_IMM_I32:
+      return I->nr_srcs == 1 && I->src[0].type == BI_INDEX_NORMAL &&
+             !I->src[0].memory;
+   default:
+      return false;
+   }
+}
+
+/* True iff every register source of a can_remat_reg() def is live in W, so the
+ * recompute inserted before the use reads valid registers. */
+static bool
+reg_remat_available(struct spill_ctx *ctx, bi_instr *def)
+{
+   bi_foreach_ssa_src(def, s) {
+      if (def->src[s].memory)
+         return false;
+      if (!BITSET_TEST(ctx->W, def->src[s].value))
+         return false;
+   }
+   return true;
+}
+
 static void
 insert_reload(struct spill_ctx *ctx, bi_block *block, bi_cursor cursor,
               unsigned node)
@@ -439,6 +478,15 @@ insert_reload(struct spill_ctx *ctx, bi_block *block, bi_cursor cursor,
    /* Reloading breaks SSA, but we're leaving SSA anyway */
    if (ctx->remat[node]) {
       remat_to(&b, idx, ctx, node);
+   } else if (ctx->remat_reg && node < ctx->n_alloc &&
+              ctx->ssa_defs[node] && can_remat_reg(ctx->ssa_defs[node]) &&
+              reg_remat_available(ctx, ctx->ssa_defs[node])) {
+      /* Recompute the address/index instead of filling it from scratch. The
+       * spilled memory copy still exists, so correctness never depends on this
+       * firing; it only avoids a latency-exposed .tl load when the source is
+       * already in a register. */
+      bi_instr *def = ctx->ssa_defs[node];
+      bi_iadd_imm_i32_to(&b, idx, def->src[0], def->index);
    } else {
       bi_memmov_to(&b, idx, bi_index_as_mem(idx, ctx));
       b.shader->fills++;
@@ -1551,6 +1599,11 @@ bi_spill_ssa(bi_context *ctx, unsigned k)
          .ssa_def_blocks = ssa_def_blocks,
          .arch = ctx->arch,
          .cmp_dist_min_remat_dst = 0,
+         /* Only enabled in this (per-block min_algorithm) phase, where W is
+          * maintained precisely at the in-block reload site. The coupling
+          * phase below inserts edge reloads with less precise W state, so it
+          * leaves remat_reg false and always uses the memory fallback. */
+         .remat_reg = !debug_get_bool_option("PAN_NO_REMAT_REG", false),
       };
 
       compute_w_entry(&sctx);

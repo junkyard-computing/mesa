@@ -748,6 +748,55 @@ bi_compute_reg_alignment(bi_context *ctx)
    }
 }
 
+/* A cheap value can be recomputed at each use instead of loaded from
+ * thread-local scratch. The post-SSA LCRA spiller (unlike bi_spill_ssa) fills
+ * everything, which dominates the memory traffic of register-heavy integer
+ * kernels (e.g. llama.cpp's Q4_K dequant, whose fills are mostly MOV/IADD_IMM
+ * of constants and computed addresses). This runs after bi_out_of_ssa, so SSA
+ * is broken and a register source may be redefined between the def and a use;
+ * recomputing from a register would therefore be unsafe. We restrict to
+ * constant/uniform sources, which never change, so the recompute is always
+ * value-identical with no liveness analysis. (Register-sourced remat here would
+ * need SSA-preserving reasoning about the sources — the larger "RA doesn't know
+ * rematerialization" work flagged in bi_optimize_late.) */
+static bool
+bi_lcra_can_remat(const bi_instr *I)
+{
+   switch (I->op) {
+   case BI_OPCODE_MOV_I32:
+   case BI_OPCODE_IADD_IMM_I32:
+      break;
+   default:
+      return false;
+   }
+
+   /* Single 32-bit result only, so the reload width always matches. */
+   if (I->nr_dests != 1 || bi_count_write_registers(I, 0) != 1)
+      return false;
+
+   bi_foreach_src(I, s) {
+      enum bi_index_type t = I->src[s].type;
+      if (t != BI_INDEX_CONSTANT && t != BI_INDEX_FAU)
+         return false;
+   }
+   return true;
+}
+
+static void
+bi_lcra_remat_to(bi_builder *b, bi_index dst, const bi_instr *def)
+{
+   switch (def->op) {
+   case BI_OPCODE_MOV_I32:
+      bi_mov_i32_to(b, dst, def->src[0]);
+      break;
+   case BI_OPCODE_IADD_IMM_I32:
+      bi_iadd_imm_i32_to(b, dst, def->src[0], def->index);
+      break;
+   default:
+      UNREACHABLE("invalid lcra remat");
+   }
+}
+
 /* Once we've chosen a spill node, spill it and return new (aligned) offset */
 
 static unsigned
@@ -757,6 +806,22 @@ bi_spill_register(bi_context *ctx, bi_index index, uint32_t offset,
    bi_builder b = {.shader = ctx};
    if (!ctx->reg_alignment)
       bi_compute_reg_alignment(ctx);
+
+   /* If the spilled value is recomputable from constants, remat its uses
+    * instead of loading them. Find the defining instruction up front. */
+   bi_instr *remat_def = NULL;
+   if (!debug_get_bool_option("PAN_NO_LCRA_REMAT", false)) {
+      bi_foreach_instr_global(ctx, I) {
+         bool is_def = false;
+         bi_foreach_dest(I, d)
+            is_def |= bi_is_equiv(I->dest[d], index);
+         if (is_def) {
+            if (bi_lcra_can_remat(I))
+               remat_def = I;
+            break;
+         }
+      }
+   }
    assert(index.value < ctx->ssa_alloc);
    unsigned channels = ctx->reg_alignment[index.value] / 4;
    assert(channels > 0);
@@ -801,9 +866,14 @@ bi_spill_register(bi_context *ctx, bi_index index, uint32_t offset,
             unsigned bits = bi_count_read_index(I, index) * 32;
             bi_rewrite_index_src_single(I, index, tmp);
 
-            bi_instr *ld = bi_load_tl(&b, bits, tmp, offset);
-            ld->no_spill = true;
-            ctx->fills++;
+            if (remat_def) {
+               /* Recompute from constants instead of loading from scratch. */
+               bi_lcra_remat_to(&b, tmp, remat_def);
+            } else {
+               bi_instr *ld = bi_load_tl(&b, bits, tmp, offset);
+               ld->no_spill = true;
+               ctx->fills++;
+            }
          }
       }
    }
