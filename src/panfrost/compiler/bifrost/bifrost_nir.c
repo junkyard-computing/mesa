@@ -355,6 +355,26 @@ bi_optimize_late(nir_shader *nir, uint64_t gpu_id,
       NIR_PASS(_, nir, nir_opt_cse);
    }
 
+   /* Valhall has no segment modifier, so each shared access adds wls_ptr to
+    * its offset itself, but LOAD/STORE carry a signed 16-bit immediate. Fold
+    * constant additions into BASE so the unrolled accesses off one base
+    * offset share a single address computation instead of each getting an
+    * IADD_IMM + IADD, and so only that base (rather than each address) is
+    * live across the loop.
+    */
+   if (pan_arch(gpu_id) >= 9) {
+      bool offsets_progress = false;
+      NIR_PASS(offsets_progress, nir, nir_opt_offsets,
+               &(nir_opt_offsets_options){
+                  .shared_max = INT16_MAX,
+               });
+      if (offsets_progress) {
+         NIR_PASS(_, nir, nir_opt_copy_prop);
+         NIR_PASS(_, nir, nir_opt_dce);
+         NIR_PASS(_, nir, nir_opt_cse);
+      }
+   }
+
    /* This opt currently helps on Bifrost but not Valhall */
    if (pan_arch(gpu_id) < 9)
       NIR_PASS(_, nir, bifrost_nir_opt_boolean_bitwise);

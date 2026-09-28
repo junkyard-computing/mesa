@@ -955,9 +955,13 @@ bi_handle_segment(bi_builder *b, bi_index *addr_lo, bi_index *addr_hi,
 
    bi_index base_lo = bi_fau(fau, false);
 
+   /* *offset may already hold a BASE folded in by nir_opt_offsets */
+   int64_t total =
+      offset ? (int64_t)(int32_t)addr_lo->value + *offset : 0;
+
    if (offset && addr_lo->type == BI_INDEX_CONSTANT &&
-       addr_lo->value == (int16_t)addr_lo->value) {
-      *offset = addr_lo->value;
+       total == (int16_t)total) {
+      *offset = total;
       *addr_lo = base_lo;
    } else {
       *addr_lo = bi_iadd_u32(b, base_lo, *addr_lo, false);
@@ -965,6 +969,19 @@ bi_handle_segment(bi_builder *b, bi_index *addr_lo, bi_index *addr_hi,
 
    /* Do not allow overflow for WLS or TLS */
    *addr_hi = bi_fau(fau, true);
+}
+
+/* Constant offset folded into a shared access by nir_opt_offsets, which only
+ * runs on Valhall: Bifrost's segment-relative accesses have no offset field.
+ */
+static int16_t
+bi_wls_base(bi_builder *b, nir_intrinsic_instr *instr)
+{
+   int32_t base = nir_intrinsic_base(instr);
+
+   assert(base == (int16_t)base);
+   assert(base == 0 || b->shader->arch >= 9);
+   return base;
 }
 
 static void
@@ -976,6 +993,9 @@ bi_emit_load(bi_builder *b, nir_intrinsic_instr *instr, enum bi_seg seg,
    bi_index dest = bi_def_index(&instr->def);
    bi_index addr_lo, addr_hi;
    bi_addr_split(b, &instr->src[0], &addr_lo, &addr_hi);
+
+   if (seg == BI_SEG_WLS)
+      offset = bi_wls_base(b, instr);
 
    bi_handle_segment(b, &addr_lo, &addr_hi, seg, &offset);
 
@@ -995,6 +1015,9 @@ bi_emit_store(bi_builder *b, nir_intrinsic_instr *instr, enum bi_seg seg,
    int16_t offset = 0;
    bi_index addr_lo, addr_hi;
    bi_addr_split(b, &instr->src[1], &addr_lo, &addr_hi);
+
+   if (seg == BI_SEG_WLS)
+      offset = bi_wls_base(b, instr);
 
    bi_handle_segment(b, &addr_lo, &addr_hi, seg, &offset);
 
