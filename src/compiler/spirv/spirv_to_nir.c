@@ -25,6 +25,7 @@
 #include "util/stack_array.h"
 
 #include <stdio.h>
+#include <inttypes.h>
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -7914,6 +7915,36 @@ spirv_to_nir(const uint32_t *words, size_t word_count,
       char blake3_str[BLAKE3_HEX_LEN];
       _mesa_blake3_format(blake3_str, b->shader->info.source_blake3);
       vtn_dump_shader(b, dump_path, blake3_str);
+
+      /* LOCAL DEBUG (not for upstream): also record the specialization constants, so a
+       * dumped module can be recompiled exactly as the application specialized it. */
+      if (spec && spec->num_entries) {
+         uint64_t h = 1469598103934665603ull;
+         for (uint32_t i = 0; i < spec->num_entries; i++) {
+            h = (h ^ spec->entries[i].id) * 1099511628211ull;
+            for (uint32_t j = 0; j < spec->entries[i].size; j++)
+               h = (h ^ spec->entries[i].data[j]) * 1099511628211ull;
+         }
+         char fn[PATH_MAX];
+         snprintf(fn, sizeof(fn), "%s/0x%s.%016" PRIx64 ".spec", dump_path, blake3_str, h);
+         FILE *sf = fopen(fn, "w");
+         if (sf) {
+            for (uint32_t i = 0; i < spec->num_entries; i++) {
+               const struct nir_spirv_specialization_entry *e = &spec->entries[i];
+               if (e->size == 4) {
+                  uint32_t v;
+                  memcpy(&v, e->data, 4);
+                  fprintf(sf, "%u=%u\n", e->id, v);
+               } else {
+                  fprintf(sf, "%u=0x", e->id);
+                  for (uint32_t j = 0; j < e->size; j++)
+                     fprintf(sf, "%02x", e->data[e->size - 1 - j]);
+                  fprintf(sf, "\n");
+               }
+            }
+            fclose(sf);
+         }
+      }
    }
 
    const char *read_path = os_get_option_secure("MESA_SPIRV_READ_PATH");
