@@ -446,7 +446,10 @@ bifrost_preprocess_nir(nir_shader *nir, uint64_t gpu_id)
     * store per use. Must run before unrolling, while the indices are still
     * loop-variable (indirect) accesses.
     */
-   NIR_PASS(_, nir, nir_lower_vars_to_scratch, 256,
+   /* TEMPORARY tuning knob (not for upstream) */
+   const char *thr_env = getenv("PAN_SCRATCH_ARRAY_BYTES");
+   int scratch_array_bytes = thr_env ? atoi(thr_env) : 256;
+   NIR_PASS(_, nir, nir_lower_vars_to_scratch, scratch_array_bytes,
             glsl_get_natural_size_align_bytes,
             glsl_get_natural_size_align_bytes);
 
