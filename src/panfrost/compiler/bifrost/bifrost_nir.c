@@ -407,6 +407,21 @@ bi_optimize_late(nir_shader *nir, uint64_t gpu_id,
    }
 }
 
+/* Scratch layout for arrays kept in TLS by nir_lower_vars_to_scratch(): natural
+ * size, but aggregates are 16-byte aligned. TLS accesses must not straddle a
+ * 16-byte boundary (see scratch_access_size_align_v9), so with only natural
+ * (4-byte) alignment every vectorized access is split back into 32-bit pieces;
+ * a 16-byte-aligned base lets contiguous element groups stay 128-bit.
+ */
+static void
+bi_scratch_array_size_align(const struct glsl_type *type, unsigned *size,
+                            unsigned *align)
+{
+   glsl_get_natural_size_align_bytes(type, size, align);
+   if (glsl_type_is_array(type) || glsl_type_is_struct(type))
+      *align = MAX2(*align, 16);
+}
+
 void
 bifrost_preprocess_nir(nir_shader *nir, uint64_t gpu_id)
 {
@@ -451,7 +466,7 @@ bifrost_preprocess_nir(nir_shader *nir, uint64_t gpu_id)
    int scratch_array_bytes = thr_env ? atoi(thr_env) : 256;
    NIR_PASS(_, nir, nir_lower_vars_to_scratch, scratch_array_bytes,
             glsl_get_natural_size_align_bytes,
-            glsl_get_natural_size_align_bytes);
+            bi_scratch_array_size_align);
 
    bi_optimize_loop(nir, gpu_id, true /* allow_copies */);
 
