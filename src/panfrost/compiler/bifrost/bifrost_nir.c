@@ -437,6 +437,19 @@ bifrost_preprocess_nir(nir_shader *nir, uint64_t gpu_id)
    /* Get rid of any global vars before we lower to scratch. */
    NIR_PASS(_, nir, nir_lower_global_vars_to_local);
 
+   /* A per-thread array larger than the whole register file (64 x 32-bit)
+    * can never be kept in registers. Promoting it to SSA (after unrolling makes
+    * every index constant) only hands the register allocator more live values
+    * than it has registers, and it spills them one scalar at a time -- e.g.
+    * llama.cpp's mul_mmq accumulators, sums[128], spill 968:1484. Keep such
+    * arrays in scratch instead, where each element costs one load and one
+    * store per use. Must run before unrolling, while the indices are still
+    * loop-variable (indirect) accesses.
+    */
+   NIR_PASS(_, nir, nir_lower_vars_to_scratch, 256,
+            glsl_get_natural_size_align_bytes,
+            glsl_get_natural_size_align_bytes);
+
    bi_optimize_loop(nir, gpu_id, true /* allow_copies */);
 
    NIR_PASS(_, nir, nir_lower_var_copies);
@@ -930,7 +943,8 @@ bifrost_postprocess_nir(nir_shader *nir,
     * TODO: If you want to remove this pass, first optimize clc libpan on v9
     *       until it doesn't emit kilobytes of scratch access.
     */
-   NIR_PASS(_, nir, nir_lower_scratch_to_var);
+   if (nir->info.internal || nir->info.stage == MESA_SHADER_KERNEL)
+      NIR_PASS(_, nir, nir_lower_scratch_to_var);
 
    if (nir_shader_has_local_variables(nir)) {
       /* Lower indirect access on small arrays to if/else trees.  After
