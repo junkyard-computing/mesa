@@ -93,7 +93,6 @@ bi_lower_bit_size(const nir_instr *instr, void *data)
          /* We only support ballot on 32-bit types. */
          return (nir_src_bit_size(intr->src[0]) == 32) ? 0 : 32;
       case nir_intrinsic_read_invocation:
-      case nir_intrinsic_shuffle:
          /* CLPER only supports 32-bit types. */
          return (intr->def.bit_size < 32) ? 32 : 0;
       default:
@@ -1095,11 +1094,7 @@ bifrost_postprocess_nir(nir_shader *nir,
       .lower_read_first_invocation = true,
       .lower_subgroup_masks = true,
       .lower_relative_shuffle = true,
-      /* Valhall CLPER reads from a per-lane index, so a shuffle is a single
-       * instruction there, instead of a loop over every distinct index.
-       */
-      .lower_shuffle = gpu_arch < 9 || getenv("PAN_LOWER_SHUFFLE") /* TEMP A/B knob */,
-      .lower_shuffle_to_32bit = true,
+      .lower_shuffle = true,
       .lower_quad = true,
       .lower_quad_broadcast_dynamic = true,
       .lower_quad_vote = true,
