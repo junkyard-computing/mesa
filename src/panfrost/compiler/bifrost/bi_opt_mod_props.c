@@ -181,9 +181,72 @@ bi_fuse_small_int_to_f32(bi_context *ctx, bi_instr *I, bi_instr *mod)
    }
 }
 
+/*
+ * Valhall 32-bit integer ALU sources can widen a 16-bit half themselves, with
+ * the signedness of the opcode, so IADD.u32(U16_TO_U32(x.h1), y) is
+ * IADD.u32(x.h1, y). This is what the [iu]mul_high lowering's 16-bit partial
+ * products turn into, so it removes most of the CVT work there.
+ *
+ * The low 32 bits of an add/sub don't depend on signedness, so without
+ * saturation the opcode may be switched to match the extension, provided the
+ * other source isn't already widened the other way. IMUL.i32 zero-extends;
+ * there's no IR opcode for the sign-extending IMUL.s32, so only the unsigned
+ * case is fused there.
+ */
+static bool
+bi_fuse_int_widen(bi_context *ctx, bi_instr *I, unsigned s, bi_instr *mod)
+{
+   if (ctx->arch < 9 || I->saturate)
+      return false;
+
+   bool sext;
+   if (mod->op == BI_OPCODE_U16_TO_U32)
+      sext = false;
+   else if (mod->op == BI_OPCODE_S16_TO_S32)
+      sext = true;
+   else
+      return false;
+
+   if (!bi_is_ssa(mod->src[0]) || I->src[s].swizzle != BI_SWIZZLE_H01 ||
+       (mod->src[0].swizzle != BI_SWIZZLE_H0 &&
+        mod->src[0].swizzle != BI_SWIZZLE_H1))
+      return false;
+
+   enum bi_opcode op;
+   switch (I->op) {
+   case BI_OPCODE_IADD_U32:
+   case BI_OPCODE_IADD_S32:
+      op = sext ? BI_OPCODE_IADD_S32 : BI_OPCODE_IADD_U32;
+      break;
+   case BI_OPCODE_ISUB_U32:
+   case BI_OPCODE_ISUB_S32:
+      op = sext ? BI_OPCODE_ISUB_S32 : BI_OPCODE_ISUB_U32;
+      break;
+   case BI_OPCODE_IMUL_I32:
+      if (sext)
+         return false;
+      op = BI_OPCODE_IMUL_I32;
+      break;
+   default:
+      return false;
+   }
+
+   /* The other source's widen, if any, must keep its meaning */
+   if (op != I->op && I->src[1 - s].swizzle != BI_SWIZZLE_H01)
+      return false;
+
+   bi_set_opcode(I, op);
+   I->src[s] = mod->src[0];
+   return true;
+}
+
 void
 bi_opt_mod_prop_forward(bi_context *ctx)
 {
+   static int no_int_widen = -1;
+   if (no_int_widen < 0)
+      no_int_widen = getenv("PAN_NO_INT_WIDEN") != NULL;
+
    bi_instr **lut = calloc(sizeof(bi_instr *), ctx->ssa_alloc);
 
    bi_foreach_instr_global_safe(ctx, I) {
@@ -213,6 +276,9 @@ bi_opt_mod_prop_forward(bi_context *ctx)
          unsigned size = bi_get_opcode_props(I)->size;
 
          bi_fuse_small_int_to_f32(ctx, I, mod);
+
+         if (!no_int_widen && bi_fuse_int_widen(ctx, I, s, mod))
+            continue;
 
          if (bi_is_fabsneg(mod->op, size)) {
             if (mod->src[0].abs && !bi_takes_fabs(ctx->arch, I, mod->src[0], s))
