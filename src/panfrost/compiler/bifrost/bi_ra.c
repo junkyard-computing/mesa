@@ -1292,6 +1292,15 @@ bi_register_allocate(bi_context *ctx)
             UNREACHABLE("Blend shaders may not spill");
 
          bi_spill_ssa(ctx, regs_to_use);
+
+         /* TEMP tuning knob (not for upstream): PAN_FILL_HOIST=<dist>, 0 = off */
+         const char *hoist_env = getenv("PAN_FILL_HOIST");
+         unsigned hoist_dist = hoist_env ? atoi(hoist_env) : 8;
+         if (hoist_dist) {
+            bi_compute_liveness_ssa(ctx);
+            bi_hoist_fills(ctx, regs_to_use, hoist_dist);
+         }
+
          spill_count += bi_lower_spill(ctx, spill_count);
 
          /* By default, we use packed TLS addressing on Valhall.
