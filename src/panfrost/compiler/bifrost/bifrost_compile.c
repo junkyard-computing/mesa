@@ -2014,7 +2014,12 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
       break;
    }
 
-   case nir_intrinsic_read_invocation: {
+   case nir_intrinsic_read_invocation:
+   case nir_intrinsic_shuffle: {
+      /* CLPER takes a per-lane index, so both are a single CLPER on Valhall;
+       * on Bifrost, shuffles are lowered to read_invocation loops.
+       */
+      assert(instr->intrinsic != nir_intrinsic_shuffle || b->shader->arch >= 9);
       assert(instr->src[0].ssa->bit_size <= 32);
       enum bi_inactive_result inactive_result = BI_INACTIVE_RESULT_ZERO;
       enum bi_lane_op lane_op = BI_LANE_OP_NONE;
