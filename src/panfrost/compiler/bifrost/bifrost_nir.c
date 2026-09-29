@@ -902,8 +902,17 @@ mem_access_size_align_cb(nir_intrinsic_op intrin, uint8_t bytes,
     * aligned to 2 bytes, use 16-bit loads, unless we needed 8-bit loads due to
     * the size.
     */
+   /* TEMP measurement knob (not for upstream as-is): PAN_WIDE_UNALIGNED=1
+    * uses 32-bit components for 2-byte-aligned accesses on v9+, relying on
+    * Valhall's unaligned access support, so 22-byte quant blocks load in
+    * 16-byte pieces instead of 8-byte ones. */
+   bool wide = pan_arch(gpu_id) >= 9 && getenv("PAN_WIDE_UNALIGNED") &&
+               intrin != nir_intrinsic_load_push_constant;
+
    if ((bytes & 1) || (align == 1))
       bit_size = 8;
+   else if (wide && !(bytes & 3))
+      bit_size = 32;
    else if ((bytes & 2) || (align == 2))
       bit_size = 16;
    else if (bit_size >= 32)
