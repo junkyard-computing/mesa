@@ -983,6 +983,18 @@ bifrost_postprocess_nir(nir_shader *nir,
    if (!(inputs->robust_modes & nir_var_mem_ssbo))
       vectorize_opts.modes |= nir_var_mem_ssbo;
 
+   /* The vectorizer only sees through constant offset terms. Explicit I/O
+    * lowering leaves things like ishl(const, const) behind, which hide that
+    * unrolled accesses are adjacent, so fold them first.
+    */
+   if (!getenv("PAN_NO_PREVEC_FOLD")) { /* TEMP A/B knob */
+      NIR_PASS(_, nir, nir_opt_constant_folding);
+      NIR_PASS(_, nir, nir_opt_algebraic);
+      NIR_PASS(_, nir, nir_opt_copy_prop);
+      NIR_PASS(_, nir, nir_opt_cse);
+      NIR_PASS(_, nir, nir_opt_dce);
+   }
+
    /* TEMP debug: dump around the vectorizer */
    if (getenv("PAN_DUMP_VEC") && !nir->info.internal) {
       fprintf(stderr, "=== PRE-VECTORIZE\n");
