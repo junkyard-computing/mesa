@@ -280,10 +280,14 @@ def build_instr(el, overrides = {}):
     sources = []
     i = 0
 
+    # IMULD.u64 multiplies two 32-bit sources into a 64-bit result: the type
+    # size describes the destination only.
+    src_tsize = 32 if name == "IMULD.u64" else tsize
+
     for src in el.findall('src'):
         if (src.attrib.get('pseudo', False)):
             continue
-        built = build_source(src, i, tsize)
+        built = build_source(src, i, src_tsize)
         sources += [built]
 
         # 64-bit sources in a 32-bit (message) instruction count as two slots
