@@ -3349,7 +3349,9 @@ bi_emit_alu(bi_builder *b, nir_alu_instr *instr)
       bi_index wide = bi_temp(b->shader);
       bi_imuld_u64_to(b, wide, s0, s1);
       bi_emit_cached_split(b, wide, 64);
-      bi_mov_i32_to(b, dst, bi_extract(b, wide, 1));
+      /* TEMP measurement knob: PAN_IMULD_HALF=<0|1> selects the half */
+      const char *half_env = getenv("PAN_IMULD_HALF");
+      bi_mov_i32_to(b, dst, bi_extract(b, wide, half_env ? atoi(half_env) : 1));
       break;
    }
 
