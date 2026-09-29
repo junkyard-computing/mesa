@@ -522,6 +522,67 @@ bi_lower_subgroups_filter(const nir_intrinsic_instr *intr, const void *data)
    return true;
 }
 
+/*
+ * nir_lower_subgroups can't tell whether every invocation of the subgroup is
+ * active at a reduction, so it ballots, compares with the full mask, and
+ * falls back to a loop over the active invocations for partial subgroups.
+ *
+ * In a compute shader whose workgroups are made of whole subgroups, a
+ * reduction outside divergent control flow always sees a full subgroup, so
+ * the xor butterfly alone is correct. Emit it directly: that drops the ballot,
+ * the branch and the partial-subgroup fallback, and each constant-mask
+ * shuffle_xor becomes a single CLPER.
+ */
+static bool
+bi_lower_uniform_reduce(nir_builder *b, nir_intrinsic_instr *intr, void *data)
+{
+   unsigned subgroup_size = *(const unsigned *)data;
+
+   if (intr->intrinsic != nir_intrinsic_reduce ||
+       intr->def.num_components != 1 || intr->def.bit_size != 32)
+      return false;
+
+   unsigned cluster_size = nir_intrinsic_cluster_size(intr);
+   if (cluster_size != 0 && cluster_size != subgroup_size)
+      return false;
+
+   if (intr->instr.block->divergent)
+      return false;
+
+   b->cursor = nir_before_instr(&intr->instr);
+
+   nir_op op = nir_intrinsic_reduction_op(intr);
+   nir_def *data_def = intr->src[0].ssa;
+
+   for (unsigned i = 1; i < subgroup_size; i *= 2) {
+      nir_def *buddy = nir_shuffle_xor(b, data_def, nir_imm_int(b, i));
+      data_def = nir_build_alu2(b, op, data_def, buddy);
+   }
+
+   nir_def_replace(&intr->def, data_def);
+   return true;
+}
+
+static bool
+bi_nir_lower_uniform_reduce(nir_shader *nir, unsigned arch)
+{
+   if (arch < 9 || !mesa_shader_stage_is_compute(nir->info.stage) ||
+       nir->info.workgroup_size_variable || getenv("PAN_NO_UNIFORM_REDUCE"))
+      return false;
+
+   unsigned subgroup_size = pan_subgroup_size(arch);
+   unsigned wg_size = nir->info.workgroup_size[0] *
+                      nir->info.workgroup_size[1] *
+                      nir->info.workgroup_size[2];
+   if (wg_size == 0 || wg_size % subgroup_size)
+      return false;
+
+   nir_divergence_analysis(nir);
+   return nir_shader_intrinsics_pass(nir, bi_lower_uniform_reduce,
+                                     nir_metadata_control_flow,
+                                     &subgroup_size);
+}
+
 static bool
 bi_lower_subgroups(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 {
@@ -1128,6 +1189,8 @@ bifrost_postprocess_nir(nir_shader *nir,
       .filter = bi_lower_subgroups_filter,
       .filter_data = &gpu_id,
    };
+   NIR_PASS(_, nir, bi_nir_lower_uniform_reduce, gpu_arch);
+
    bool lower_subgroups_progress = false;
    NIR_PASS(lower_subgroups_progress, nir, nir_lower_subgroups,
             &lower_subgroup_opts);
