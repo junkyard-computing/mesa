@@ -3341,6 +3341,18 @@ bi_emit_alu(bi_builder *b, nir_alu_instr *instr)
       bi_imul_to(b, sz, dst, s0, s1);
       break;
 
+   case nir_op_umul_high: {
+      /* Valhall IMULD.u64 writes the full 64-bit product; take the high
+       * half instead of building it from 16-bit partial products.
+       */
+      assert(sz == 32 && b->shader->arch >= 9);
+      bi_index wide = bi_temp(b->shader);
+      bi_imuld_u64_to(b, wide, s0, s1);
+      bi_emit_cached_split(b, wide, 64);
+      bi_mov_i32_to(b, dst, bi_extract(b, wide, 1));
+      break;
+   }
+
    case nir_op_iabs:
       bi_iabs_to(b, sz, dst, s0);
       break;

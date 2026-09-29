@@ -8429,6 +8429,13 @@
     <mod name="neg2" size="1" opt="neg"/>
   </ins>
 
+  <!-- Valhall IMULD.u64: 32x32 -> 64-bit product, high half in the second
+       register of the destination. Used for [iu]mul_high. -->
+  <ins name="IMULD.u64" pseudo="true" unit="fma">
+    <src start="0"/>
+    <src start="3"/>
+  </ins>
+
   <ins name="IADD_IMM.i32" pseudo="true" unit="add">
     <src start="0"/>
     <immediate name="index" size="32"/>

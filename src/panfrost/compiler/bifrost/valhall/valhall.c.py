@@ -33,8 +33,6 @@ SKIP = set([
         "IADD.s64",
         "ISUB.u64",
         "ISUB.s64",
-        "IMULD.u64",
-        "IMULD.u64",
         "ARSHIFT_AND.i64",
         "ARSHIFT_OR.i64",
         "ARSHIFT_XOR.i64",

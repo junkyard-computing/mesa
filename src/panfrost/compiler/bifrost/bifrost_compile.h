@@ -124,7 +124,7 @@ bool valhall_can_merge_workgroups(nir_shader *nir);
        * that nir_opt_load_store_vectorize cannot parse, which prevents        \
        * vectorizing scalarized OpenCL vload/vstore accesses. */              \
       .late_lower_int64 = (arch >= 9),                                         \
-      .lower_mul_high = true,                                                  \
+      .lower_mul_high = arch < 9,                                              \
       .lower_fisnormal = true,                                                 \
       .lower_uadd_carry = true,                                                \
       .lower_usub_borrow = true,                                               \

@@ -127,7 +127,8 @@ bi_count_write_registers(const bi_instr *ins, unsigned d)
       }
    } else if (ins->op == BI_OPCODE_SEG_ADD_I64 ||
               ins->op == BI_OPCODE_SHADDX_S64 ||
-              ins->op == BI_OPCODE_SHADDX_U64) {
+              ins->op == BI_OPCODE_SHADDX_U64 ||
+              ins->op == BI_OPCODE_IMULD_U64) {
       return 2;
    } else if (ins->op == BI_OPCODE_TEXC_DUAL && d == 1) {
       return ins->sr_count_2;

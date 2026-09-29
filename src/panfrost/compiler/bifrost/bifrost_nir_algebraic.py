@@ -197,6 +197,24 @@ algebraic_late += [
      ('unpack_64_2x32_split_y', ('umul_2x32_64', a, b)), 'is_kraid'),
 ]
 
+# Valhall has an unsigned 32x32->64 multiply (IMULD.u64), which the backend
+# uses for 32-bit umul_high. Build everything else from it.
+algebraic_late += [
+    (('imul_high', 'a@8', 'b@8'),
+     unpack_16_2x8_y(('imul', ('i2i16', a), ('i2i16', b))), '!is_kraid && gpu_arch >= 9'),
+    (('umul_high', 'a@8', 'b@8'),
+     unpack_16_2x8_y(('imul', ('u2u16', a), ('u2u16', b))), '!is_kraid && gpu_arch >= 9'),
+    (('imul_high', 'a@16', 'b@16'),
+     ('unpack_32_2x16_split_y', ('imul', ('i2i32', a), ('i2i32', b))), '!is_kraid && gpu_arch >= 9'),
+    (('umul_high', 'a@16', 'b@16'),
+     ('unpack_32_2x16_split_y', ('imul', ('u2u32', a), ('u2u32', b))), '!is_kraid && gpu_arch >= 9'),
+    # Signed high half from the unsigned one: subtract b when a < 0 and a
+    # when b < 0.
+    (('imul_high', 'a@32', 'b@32'),
+     ('isub', ('isub', ('umul_high', a, b), ('iand', ('ishr', a, 31), b)),
+              ('iand', ('ishr', b, 31), a)), '!is_kraid && gpu_arch >= 9'),
+]
+
 # We don't have hardware fpow so we need to lower it.  However, the way we
 # implement 32-bit fexp makes it so we can do better than this for 32-bit
 # so we leave that unlowered
