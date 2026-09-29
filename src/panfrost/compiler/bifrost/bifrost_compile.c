@@ -4493,7 +4493,18 @@ bi_compile_variant_nir(nir_shader *nir,
     * unset. Must run after the last CSE, which would undo it. */
    const char *remat_env = getenv("PAN_REMAT");
    if (likely(optimize) && remat_env && atoi(remat_env) > 0) {
-      if (bi_remat_alu_chains(ctx, atoi(remat_env))) {
+      /* Only worth it when the shader is well over the register budget;
+       * otherwise it just adds ALU. TEMP knob: PAN_REMAT_DEMAND. */
+      bi_compute_liveness_ssa(ctx);
+      unsigned demand = bi_calc_register_demand(ctx);
+      const char *demand_env = getenv("PAN_REMAT_DEMAND");
+      unsigned min_demand = demand_env ? atoi(demand_env) : 0;
+
+      if (getenv("PAN_REMAT_DEBUG"))
+         fprintf(stderr, "remat: register demand %u (threshold %u)\n", demand,
+                 min_demand);
+
+      if (demand > min_demand && bi_remat_alu_chains(ctx, atoi(remat_env))) {
          bi_opt_dce(ctx, false);
          bi_validate(ctx, "ALU chain rematerialization");
       }
