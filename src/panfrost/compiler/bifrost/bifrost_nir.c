@@ -1051,7 +1051,7 @@ bifrost_postprocess_nir(nir_shader *nir,
     */
    nir_load_store_vectorize_options vectorize_opts = {
       .modes = nir_var_mem_global |
-               nir_var_mem_shared |
+               (getenv("PAN_NO_VEC_SHARED") ? 0 : nir_var_mem_shared) | /* TEMP knob */
                nir_var_mem_ubo /* | nir_var_mem_temp */ |
                /* TEMP measurement knob, not for upstream */
                (getenv("PAN_VEC_TEMP") ? nir_var_shader_temp : 0),
