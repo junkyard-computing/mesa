@@ -1061,7 +1061,8 @@ bifrost_postprocess_nir(nir_shader *nir,
    };
 
    /* Only allow vectorization of SSBOs when no robustness2 is configured */
-   if (!(inputs->robust_modes & nir_var_mem_ssbo))
+   if (!(inputs->robust_modes & nir_var_mem_ssbo) ||
+       getenv("PAN_VEC_ROBUST_SSBO") /* TEMP measurement knob */)
       vectorize_opts.modes |= nir_var_mem_ssbo;
 
    /* The vectorizer only sees through constant offset terms. Explicit I/O
