@@ -308,6 +308,14 @@ bi_optimize_loop(nir_shader *nir, uint64_t gpu_id, bool allow_copies)
    NIR_PASS(_, nir, nir_remove_dead_variables, nir_var_function_temp, NULL);
 }
 
+/* TEMP measurement knob (not for upstream): PAN_WLS_WRAP=1 folds without
+ * proving the offset addition can't wrap */
+static bool
+bi_allow_offset_wrap_tmp(nir_intrinsic_instr *intr, const void *data)
+{
+   return getenv("PAN_WLS_WRAP") != NULL;
+}
+
 static void
 bi_optimize_late(nir_shader *nir, uint64_t gpu_id,
                 const struct pan_shader_info *info)
@@ -367,6 +375,7 @@ bi_optimize_late(nir_shader *nir, uint64_t gpu_id,
       NIR_PASS(offsets_progress, nir, nir_opt_offsets,
                &(nir_opt_offsets_options){
                   .shared_max = INT16_MAX,
+                  .allow_offset_wrap_cb = bi_allow_offset_wrap_tmp,
                });
       if (offsets_progress) {
          NIR_PASS(_, nir, nir_opt_copy_prop);
