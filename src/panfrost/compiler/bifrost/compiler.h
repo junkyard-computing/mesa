@@ -1712,6 +1712,7 @@ void bi_liveness_ins_update_ssa(BITSET_WORD *live, const bi_instr *ins);
 
 unsigned bi_calc_register_demand(bi_context *ctx);
 void bi_hoist_fills(bi_context *ctx, unsigned k, unsigned max_dist);
+bool bi_remat_alu_chains(bi_context *ctx, unsigned min_span);
 
 void bi_postra_liveness(bi_context *ctx);
 uint64_t MUST_CHECK bi_postra_liveness_ins(uint64_t live, bi_instr *ins);

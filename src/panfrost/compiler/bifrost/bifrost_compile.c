@@ -4489,6 +4489,16 @@ bi_compile_variant_nir(nir_shader *nir,
 
    bi_validate(ctx, "Late lowering");
 
+   /* TEMP tuning knob (not for upstream): PAN_REMAT=<min use span>, off when
+    * unset. Must run after the last CSE, which would undo it. */
+   const char *remat_env = getenv("PAN_REMAT");
+   if (likely(optimize) && remat_env && atoi(remat_env) > 0) {
+      if (bi_remat_alu_chains(ctx, atoi(remat_env))) {
+         bi_opt_dce(ctx, false);
+         bi_validate(ctx, "ALU chain rematerialization");
+      }
+   }
+
    bi_iterator_schedule(ctx);
 
    if (likely(!(bifrost_debug & BIFROST_DBG_NOPSCHED))) {

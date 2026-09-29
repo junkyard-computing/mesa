@@ -27,6 +27,7 @@ libpanfrost_bifrost_files = files(
   'bi_pressure_schedule.c',
   'bi_ra.c',
   'bi_ra_ssa.c',
+  'bi_remat.c',
   'bi_spill_ssa.c',
   'bi_reindex_ssa.c',
   'bi_repair_ssa.c',
