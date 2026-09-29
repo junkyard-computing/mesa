@@ -2014,6 +2014,20 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
       break;
    }
 
+   case nir_intrinsic_shuffle_xor: {
+      /* Only constant masks survive nir_lower_subgroups (see
+       * bi_lower_subgroups_filter). CLPER XORs its own lane index with the
+       * immediate, like it does for derivatives.
+       */
+      assert(b->shader->arch >= 9 && instr->def.bit_size == 32);
+      enum bi_subgroup subgroup =
+         bi_subgroup_from_cluster_size(pan_subgroup_size(b->shader->arch));
+      bi_clper_i32_to(b, dst, bi_src_index(&instr->src[0]),
+                      bi_imm_u8(nir_src_as_uint(instr->src[1])),
+                      BI_INACTIVE_RESULT_ZERO, BI_LANE_OP_XOR, subgroup);
+      break;
+   }
+
    case nir_intrinsic_read_invocation: {
       assert(instr->src[0].ssa->bit_size <= 32);
       enum bi_inactive_result inactive_result = BI_INACTIVE_RESULT_ZERO;

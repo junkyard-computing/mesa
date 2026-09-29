@@ -502,6 +502,26 @@ bifrost_preprocess_nir(nir_shader *nir, uint64_t gpu_id)
    NIR_PASS(_, nir, nir_lower_var_copies);
 }
 
+/* Valhall CLPER can apply an XOR to the lane index itself, so a shuffle_xor
+ * with a constant mask is one instruction instead of the loop over distinct
+ * lanes that nir_lower_subgroups builds for shuffles. Reductions over a full
+ * subgroup are built from these.
+ */
+static bool
+bi_lower_subgroups_filter(const nir_intrinsic_instr *intr, const void *data)
+{
+   uint64_t gpu_id = *(const uint64_t *)data;
+
+   if (pan_arch(gpu_id) >= 9 && intr->intrinsic == nir_intrinsic_shuffle_xor &&
+       !getenv("PAN_LOWER_SHUFFLE") /* TEMP A/B knob */ &&
+       intr->def.num_components == 1 && intr->def.bit_size == 32 &&
+       nir_src_is_const(intr->src[1]) &&
+       nir_src_as_uint(intr->src[1]) < pan_subgroup_size(pan_arch(gpu_id)))
+      return false;
+
+   return true;
+}
+
 static bool
 bi_lower_subgroups(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 {
@@ -1105,6 +1125,8 @@ bifrost_postprocess_nir(nir_shader *nir,
       .lower_reduce = true,
       .lower_boolean_reduce = true,
       .lower_boolean_shuffle = true,
+      .filter = bi_lower_subgroups_filter,
+      .filter_data = &gpu_id,
    };
    bool lower_subgroups_progress = false;
    NIR_PASS(lower_subgroups_progress, nir, nir_lower_subgroups,
