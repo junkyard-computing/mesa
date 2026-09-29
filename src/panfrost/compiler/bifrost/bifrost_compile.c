@@ -3351,7 +3351,21 @@ bi_emit_alu(bi_builder *b, nir_alu_instr *instr)
       bi_emit_cached_split(b, wide, 64);
       /* TEMP measurement knob: PAN_IMULD_HALF=<0|1> selects the half */
       const char *half_env = getenv("PAN_IMULD_HALF");
-      bi_mov_i32_to(b, dst, bi_extract(b, wide, half_env ? atoi(half_env) : 1));
+      bi_index hi = bi_extract(b, wide, half_env ? atoi(half_env) : 1);
+
+      /* TEMP probe: PAN_IMULD_SIGNED=1 assumes IMULD multiplies signed
+       * values, and recovers the unsigned high half:
+       * hi_u = hi_s + (a < 0 ? b : 0) + (b < 0 ? a : 0)
+       */
+      if (getenv("PAN_IMULD_SIGNED")) {
+         bi_index sa = bi_rshift_or(b, 32, s0, bi_zero(), bi_imm_u8(31), true);
+         bi_index sb = bi_rshift_or(b, 32, s1, bi_zero(), bi_imm_u8(31), true);
+         bi_index ca = bi_lshift_and(b, 32, sa, s1, bi_imm_u8(0));
+         bi_index cb = bi_lshift_and(b, 32, sb, s0, bi_imm_u8(0));
+         hi = bi_iadd_u32(b, bi_iadd_u32(b, hi, ca, false), cb, false);
+      }
+
+      bi_mov_i32_to(b, dst, hi);
       break;
    }
 
