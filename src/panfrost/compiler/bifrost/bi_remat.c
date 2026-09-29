@@ -181,6 +181,47 @@ bi_remat_block(struct remat_ctx *rc, bi_block *block, unsigned min_span)
       }
    }
 
+   /* TEMP tuning knob (not for upstream): PAN_REMAT_MAX=<n> only
+    * rematerializes the n values with the longest use spans. */
+   unsigned span_floor = min_span;
+   const char *max_env = getenv("PAN_REMAT_MAX");
+   if (max_env && atoi(max_env) > 0) {
+      unsigned max_values = atoi(max_env);
+      unsigned *spans = calloc(n, sizeof(unsigned));
+      unsigned nspans = 0;
+
+      for (unsigned p = 0; p < n; ++p) {
+         if (!bi_remat_cheap(ins[p]))
+            continue;
+         unsigned v = ins[p]->dest[0].value;
+         unsigned nu = v < nr_values
+                          ? util_dynarray_num_elements(&uses[v], unsigned)
+                          : 0;
+         if (foreign[v] || nu < 2)
+            continue;
+         unsigned *u = util_dynarray_begin(&uses[v]);
+         unsigned span = u[nu - 1] / 16 - u[0] / 16;
+         if (span >= min_span)
+            spans[nspans++] = span;
+      }
+
+      if (nspans > max_values) {
+         /* Partial selection of the max_values-th largest span. */
+         for (unsigned i = 0; i < max_values; ++i) {
+            for (unsigned j = i + 1; j < nspans; ++j) {
+               if (spans[j] > spans[i]) {
+                  unsigned t = spans[i];
+                  spans[i] = spans[j];
+                  spans[j] = t;
+               }
+            }
+         }
+         span_floor = MAX2(min_span, spans[max_values - 1]);
+      }
+
+      free(spans);
+   }
+
    for (unsigned p = 0; p < n; ++p) {
       bi_instr *V = ins[p];
       if (!bi_remat_cheap(V))
@@ -195,7 +236,7 @@ bi_remat_block(struct remat_ctx *rc, bi_block *block, unsigned min_span)
 
       unsigned *u = util_dynarray_begin(&uses[v]);
       unsigned first = u[0] / 16, last = u[nu - 1] / 16;
-      if (last - first < min_span)
+      if (last - first < span_floor)
          continue;
 
       bi_instr *chain[REMAT_MAX_CHAIN];
