@@ -983,7 +983,16 @@ bifrost_postprocess_nir(nir_shader *nir,
    if (!(inputs->robust_modes & nir_var_mem_ssbo))
       vectorize_opts.modes |= nir_var_mem_ssbo;
 
+   /* TEMP debug: dump around the vectorizer */
+   if (getenv("PAN_DUMP_VEC") && !nir->info.internal) {
+      fprintf(stderr, "=== PRE-VECTORIZE\n");
+      nir_print_shader(nir, stderr);
+   }
    NIR_PASS(_, nir, nir_opt_load_store_vectorize, &vectorize_opts);
+   if (getenv("PAN_DUMP_VEC") && !nir->info.internal) {
+      fprintf(stderr, "=== POST-VECTORIZE\n");
+      nir_print_shader(nir, stderr);
+   }
 
    /* Our OpenCL compiler (src/panfrost/clc/pan_compile.c) has a very weird and
     * suboptimal optimization pipeline that results in a lot of unoptimized
