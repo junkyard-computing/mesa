@@ -1291,11 +1291,14 @@ bi_register_allocate(bi_context *ctx)
          if (ctx->inputs->is_blend)
             UNREACHABLE("Blend shaders may not spill");
 
-         bi_spill_ssa(ctx, regs_to_use);
-
-         /* TEMP tuning knob (not for upstream): PAN_FILL_HOIST=<dist>, 0 = off */
+         /* TEMP tuning knobs (not for upstream): PAN_FILL_HOIST=<dist>, 0 = off;
+          * PAN_SPILL_SLACK=<regs> left free by the spiller for hoisted fills */
          const char *hoist_env = getenv("PAN_FILL_HOIST");
          unsigned hoist_dist = hoist_env ? atoi(hoist_env) : 8;
+         const char *slack_env = getenv("PAN_SPILL_SLACK");
+         unsigned slack = (slack_env && hoist_dist) ? atoi(slack_env) : 0;
+
+         bi_spill_ssa(ctx, regs_to_use - slack);
          if (hoist_dist) {
             bi_compute_liveness_ssa(ctx);
             bi_hoist_fills(ctx, regs_to_use, hoist_dist);
