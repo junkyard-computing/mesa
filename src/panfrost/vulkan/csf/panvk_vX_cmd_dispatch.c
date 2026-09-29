@@ -319,6 +319,14 @@ panvk_per_arch(cmd_dispatch_shader)(
          unsigned task_increment = 0;
          panvk_per_arch(calculate_task_axis_and_increment)(
             cs, phys_dev, &dim, &task_axis, &task_increment);
+
+         /* TEMP measurement knob (not for upstream): PAN_TASK_INC=<n> forces
+          * the task increment along X */
+         const char *task_env = getenv("PAN_TASK_INC");
+         if (task_env && atoi(task_env) > 0 && atoi(task_env) <= dim.x) {
+            task_axis = MALI_TASK_AXIS_X;
+            task_increment = atoi(task_env);
+         }
          cs_trace_run_compute(b, tracing_ctx, cs_scratch_reg_tuple(b, 0, 4),
                               task_increment, task_axis,
                               PANVK_COMPUTE_RES_SEL);
