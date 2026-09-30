@@ -221,6 +221,15 @@ mem_vectorize_cb(unsigned align_mul, unsigned align_offset, unsigned bit_size,
    if (bytes > max_bytes)
       return false;
 
+   /* TEMP measurement knob (PAN_VEC_SHARED_MAX=bytes): wide shared-memory
+    * vectors raise register pressure enough to spill in llama's MMQ tiles, so
+    * cap shared accesses separately from the other modes. */
+   const char *shared_max = getenv("PAN_VEC_SHARED_MAX");
+   if (shared_max && (low->intrinsic == nir_intrinsic_load_shared ||
+                      low->intrinsic == nir_intrinsic_store_shared) &&
+       bytes > (unsigned)atoi(shared_max))
+      return false;
+
    /* Valhall+ (v9+) supports unaligned load/store, so we don't need the
     * combined access to be naturally aligned.
     */
@@ -1060,7 +1069,7 @@ bifrost_postprocess_nir(nir_shader *nir,
     */
    nir_load_store_vectorize_options vectorize_opts = {
       .modes = nir_var_mem_global |
-               (getenv("PAN_NO_VEC_SHARED") ? 0 : nir_var_mem_shared) | /* TEMP knob */
+               (getenv("PAN_NO_VEC_SHARED") && !getenv("PAN_VEC_SHARED_MAX") ? 0 : nir_var_mem_shared) | /* TEMP knob */
                nir_var_mem_ubo /* | nir_var_mem_temp */ |
                /* TEMP measurement knob, not for upstream */
                (getenv("PAN_VEC_TEMP") ? nir_var_shader_temp : 0),
