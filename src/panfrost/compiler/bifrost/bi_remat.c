@@ -38,6 +38,15 @@ bi_remat_cheap(const bi_instr *I)
    if (I->nr_dests != 1 || I->dest[0].type != BI_INDEX_NORMAL)
       return false;
 
+   /* IMUL runs on the SFU at a quarter of the ALU rate on Valhall, so
+    * recomputing one can cost more than the fill it replaces
+    * (PAN_REMAT_NO_IMUL, measurement). */
+   static int no_imul = -1;
+   if (no_imul < 0)
+      no_imul = getenv("PAN_REMAT_NO_IMUL") != NULL;
+   if (no_imul && I->op == BI_OPCODE_IMUL_I32)
+      return false;
+
    switch (I->op) {
    case BI_OPCODE_LSHIFT_AND_I32:
    case BI_OPCODE_LSHIFT_OR_I32:
