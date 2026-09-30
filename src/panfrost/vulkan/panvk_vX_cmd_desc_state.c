@@ -247,7 +247,9 @@ panvk_per_arch(cmd_fill_dyn_bufs)(
       assert(set);
 
       pan_pack(&buffers[i], BUFFER, cfg) {
-         cfg.size = align(set->dyn_bufs[dyn_buf_idx].size, is_ssbo ? 4 : 16);
+         /* TEMP measurement knob, see panvk_vX_descriptor_set.c */
+         cfg.size = align(set->dyn_bufs[dyn_buf_idx].size,
+                          is_ssbo ? (getenv("PAN_SSBO_ROUND") ? 64 : 4) : 16);
          cfg.address = set->dyn_bufs[dyn_buf_idx].dev_addr + dyn_buf_offset;
       }
    }

@@ -974,7 +974,9 @@ panvk_per_arch(get_physical_device_properties)(
       /* Always aligned on a uniform slot (vec4). */
       .minUniformBufferOffsetAlignment = 16,
       /* LOAD.i128 and LD_PKA.i128 which require 16B alignment */
-      .minStorageBufferOffsetAlignment = 16,
+      /* TEMP measurement knob (PAN_SSBO_ALIGN64): LD_PKA is slow unless the
+       * descriptor address is 64-byte aligned. */
+      .minStorageBufferOffsetAlignment = getenv("PAN_SSBO_ALIGN64") ? 64 : 16,
       /* Signed 4-bit value. */
       .minTexelOffset = -8,
       .maxTexelOffset = 7,

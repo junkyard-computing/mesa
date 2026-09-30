@@ -207,7 +207,9 @@ write_buffer_desc(struct panvk_descriptor_set *set,
 
    pan_pack(&desc, BUFFER, cfg) {
       cfg.address = panvk_buffer_gpu_ptr(buffer, info->offset);
-      cfg.size = align(range, is_ssbo ? 4 : 16);
+      /* TEMP measurement knob (PAN_SSBO_ROUND): LD_PKA takes a slow path for
+       * every access when the descriptor size is not a multiple of 64. */
+      cfg.size = align(range, is_ssbo ? (getenv("PAN_SSBO_ROUND") ? 64 : 4) : 16);
    }
    write_desc(set, binding, elem, &desc, NO_SUBDESC);
 #endif
