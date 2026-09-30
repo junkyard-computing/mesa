@@ -908,8 +908,14 @@ panvk_per_arch(calculate_task_axis_and_increment)(
     * MMQ: 87.7% -> 95.8% core-active, 40.6 -> 35.6 ms), while single-warp
     * workgroups need the coarser tasks. */
    const char *inc1_env = getenv("PAN_TASK_INC1_MIN_THREADS");
-   if (inc1_env && threads_per_wg >= (unsigned)atoi(inc1_env))
-      wgs_per_task = 1;
+   if (inc1_env && threads_per_wg >= (unsigned)atoi(inc1_env)) {
+      /* PAN_TASK_INC1_BALANCE: only when the default split doesn't already
+       * give every core the same number of tasks along the rows. */
+      const unsigned tasks = DIV_ROUND_UP(wg_count[0], wgs_per_task) *
+                             wg_count[1] * wg_count[2];
+      if (!getenv("PAN_TASK_INC1_BALANCE") || tasks % total_cores)
+         wgs_per_task = 1;
+   }
 
    *task_axis = MALI_TASK_AXIS_X;
    *task_increment = wgs_per_task;
