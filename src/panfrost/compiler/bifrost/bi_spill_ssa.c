@@ -841,8 +841,16 @@ compute_w_entry_loop_header(struct spill_ctx *ctx)
       const char *env = getenv("PAN_LOOP_W_RESERVE");
       w_reserve = env ? atoi(env) : 0;
    }
+   /* PAN_LOOP_W_RESERVE_MIN_DEMAND: only for shaders this far over budget */
+   static int w_min_demand = -1;
+   if (w_min_demand < 0) {
+      const char *env = getenv("PAN_LOOP_W_RESERVE_MIN_DEMAND");
+      w_min_demand = env ? atoi(env) : 0;
+   }
+   const unsigned reserve =
+      ctx->shader->ra_demand >= (unsigned)w_min_demand ? w_reserve : 0;
    const unsigned w_limit =
-      ctx->k > (unsigned)w_reserve ? ctx->k - w_reserve : ctx->k;
+      ctx->k > reserve ? ctx->k - reserve : ctx->k;
 
    /* Take as much as we can. */
    for (unsigned i = 0; i < n_ca; ++i) {

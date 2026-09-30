@@ -1350,6 +1350,7 @@ bi_register_allocate(bi_context *ctx)
          bi_print_shader(ctx, stderr);
       }
       unsigned register_demand = bi_calc_register_demand(ctx);
+      ctx->ra_demand = register_demand;
       if (register_demand > regs_to_use) {
          /* spill registers if we can */
          if (ctx->inputs->is_blend)

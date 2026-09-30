@@ -1347,6 +1347,9 @@ typedef struct {
    /* TEMP (PAN_LOAD_HOIST_MAX_DEMAND): register demand too high for load
     * hoisting to pay off, it would only add spills */
    bool no_load_hoist;
+
+   /* TEMP: register demand measured by RA before spilling */
+   unsigned ra_demand;
 } bi_context;
 
 static inline enum bi_round
