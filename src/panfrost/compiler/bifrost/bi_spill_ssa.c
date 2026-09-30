@@ -829,12 +829,27 @@ compute_w_entry_loop_header(struct spill_ctx *ctx)
    else
       n_ca = n_ca_loop;
 
+   /* TEMP measurement knob (PAN_LOOP_W_RESERVE=n): leave n registers free in
+    * the loop header's entry set. Filling it completely makes the header's
+    * first instructions evict (spill) values that were just chosen, which for
+    * phis means a copy plus a store on every iteration, instead of deciding at
+    * the edge: a memory phi stored at the end of the latch, or a live-in value
+    * spilled once in the preheader.
+    */
+   static int w_reserve = -1;
+   if (w_reserve < 0) {
+      const char *env = getenv("PAN_LOOP_W_RESERVE");
+      w_reserve = env ? atoi(env) : 0;
+   }
+   const unsigned w_limit =
+      ctx->k > (unsigned)w_reserve ? ctx->k - w_reserve : ctx->k;
+
    /* Take as much as we can. */
    for (unsigned i = 0; i < n_ca; ++i) {
       unsigned node = candidates[i].node;
       unsigned comps = node_size(ctx, node);
 
-      if ((ctx->nW + comps) <= ctx->k) {
+      if ((ctx->nW + comps) <= w_limit) {
          insert_W(ctx, node);
          sb->W_entry[sb->nW_entry++] = node;
       }
