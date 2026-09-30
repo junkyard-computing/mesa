@@ -445,19 +445,46 @@ bi_optimize_late(nir_shader *nir, uint64_t gpu_id,
    }
 }
 
-/* Scratch layout for arrays kept in TLS by nir_lower_vars_to_scratch(): natural
- * size, but aggregates are 16-byte aligned. TLS accesses must not straddle a
- * 16-byte boundary (see scratch_access_size_align_v9), so with only natural
- * (4-byte) alignment every vectorized access is split back into 32-bit pieces;
- * a 16-byte-aligned base lets contiguous element groups stay 128-bit.
+/* Scratch layout for arrays kept in TLS by nir_lower_vars_to_scratch():
+ * aggregates are 16-byte aligned. TLS accesses must not straddle a 16-byte
+ * boundary (see scratch_access_size_align_v9), so with only natural (4-byte)
+ * alignment every vectorized access is split back into 32-bit pieces; a
+ * 16-byte-aligned base lets contiguous element groups stay 128-bit.
+ *
+ * The lowering calls this for every level of a type: the variable (its slot
+ * size), each array element type (the stride, ALIGN_POT(size, align)) and each
+ * struct field (the field offsets). The sizes must therefore be computed under
+ * the same rule, recursively, with every aggregate padded to its alignment.
+ * Returning the natural size while raising the alignment made a nested array
+ * whose rows are not 16-byte multiples (float[rows][3], or llama's
+ * flash-attention scratch at head size 72) use a padded row stride but only a
+ * natural-sized slot, so it overran into the next scratch variable.
  */
 static void
 bi_scratch_array_size_align(const struct glsl_type *type, unsigned *size,
                             unsigned *align)
 {
-   glsl_get_natural_size_align_bytes(type, size, align);
-   if (glsl_type_is_array(type) || glsl_type_is_struct(type))
-      *align = MAX2(*align, 16);
+   if (glsl_type_is_array(type)) {
+      unsigned elem_size, elem_align;
+      bi_scratch_array_size_align(glsl_get_array_element(type), &elem_size,
+                                  &elem_align);
+      *align = MAX2(elem_align, 16);
+      *size = ALIGN_POT(ALIGN_POT(elem_size, elem_align) * glsl_get_length(type),
+                        *align);
+   } else if (glsl_type_is_struct(type)) {
+      unsigned offset = 0, max_align = 1;
+      for (unsigned i = 0; i < glsl_get_length(type); i++) {
+         unsigned field_size, field_align;
+         bi_scratch_array_size_align(glsl_get_struct_field(type, i),
+                                     &field_size, &field_align);
+         offset = ALIGN_POT(offset, field_align) + field_size;
+         max_align = MAX2(max_align, field_align);
+      }
+      *align = MAX2(max_align, 16);
+      *size = ALIGN_POT(offset, *align);
+   } else {
+      glsl_get_natural_size_align_bytes(type, size, align);
+   }
 }
 
 void
