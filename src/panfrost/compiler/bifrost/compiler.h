@@ -1343,6 +1343,10 @@ typedef struct {
    /* Placement of the inline constant pool emitted at pack time, if any */
    unsigned constant_pool_size_B;
    unsigned constant_pool_offset_B;
+
+   /* TEMP (PAN_LOAD_HOIST_MAX_DEMAND): register demand too high for load
+    * hoisting to pay off, it would only add spills */
+   bool no_load_hoist;
 } bi_context;
 
 static inline enum bi_round

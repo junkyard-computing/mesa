@@ -286,10 +286,11 @@ pressure_schedule_block(bi_context *ctx, bi_block *block, struct sched_ctx *s)
       hoist_budget = env ? atoi(env) : -1;
    }
    signed cap = orig_max_pressure + hoist_budget;
+   const bool hoist = hoist_budget >= 0 && !ctx->no_load_hoist;
 
    while (!list_is_empty(&s->dag->heads)) {
       struct sched_node *node =
-         choose_instr(s, hoist_budget >= 0 && pressure < cap);
+         choose_instr(s, hoist && pressure < cap);
       pressure += calculate_pressure_delta(node->instr, s->live);
       max_pressure = MAX2(pressure, max_pressure);
       dag_prune_head(s->dag, &node->dag);
@@ -301,7 +302,7 @@ pressure_schedule_block(bi_context *ctx, bi_block *block, struct sched_ctx *s)
    /* Bail if it looks like it's worse. When hoisting loads, spending up to
     * the budget is the point; the cap is only checked before each choice, so
     * allow the last instruction's worth of overshoot too. */
-   if (hoist_budget >= 0 ? max_pressure > cap + 4
+   if (hoist ? max_pressure > cap + 4
                          : max_pressure >= orig_max_pressure) {
       free(schedule);
       return;

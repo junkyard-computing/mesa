@@ -4510,6 +4510,18 @@ bi_compile_variant_nir(nir_shader *nir,
       }
    }
 
+   /* TEMP measurement knob (PAN_LOAD_HOIST_MAX_DEMAND=n): skip load hoisting
+    * in shaders whose register demand is already far over the register file.
+    * There every extra live value becomes a spill (llama FA with Br=8: demand
+    * 178, 206 -> 235 spills and 8% slower with hoisting, while the q5_0 MMQ
+    * tile at demand 103 needs it). */
+   const char *hoist_demand_env = getenv("PAN_LOAD_HOIST_MAX_DEMAND");
+   if (likely(optimize) && hoist_demand_env) {
+      bi_compute_liveness_ssa(ctx);
+      ctx->no_load_hoist =
+         bi_calc_register_demand(ctx) > (unsigned)atoi(hoist_demand_env);
+   }
+
    bi_iterator_schedule(ctx);
 
    if (likely(!(bifrost_debug & BIFROST_DBG_NOPSCHED))) {
