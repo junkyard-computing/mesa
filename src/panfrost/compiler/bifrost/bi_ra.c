@@ -1026,8 +1026,31 @@ bi_out_of_ssa(bi_context *ctx)
    unsigned first_reg = ctx->ssa_alloc;
    bool allow_propagate;
 
+   /* TEMP measurement knob (PAN_PHI_MEM_DIRECT): a phi whose destination was
+    * spilled is normally lowered to "mov tmp, src" in each predecessor plus
+    * "store tmp" at the top of its block. In a loop header that is a copy and
+    * a store every iteration, all funnelled through whichever register RA
+    * gives the short-lived tmps, so each copy waits for the previous store to
+    * release it. Store from the source register at the end of each
+    * predecessor instead. All loads for a block's phis are emitted in the
+    * predecessors before any of these stores, so the copies stay parallel.
+    */
+   static int phi_mem_direct = -1;
+   if (phi_mem_direct < 0)
+      phi_mem_direct = getenv("PAN_PHI_MEM_DIRECT") != NULL;
+
+   struct phi_mem_store {
+      bi_block *pred;
+      bi_index val;
+      unsigned words;
+      uint32_t offset;
+   };
+
    /* Trivially lower phis */
    bi_foreach_block(ctx, block) {
+      struct util_dynarray pending;
+      util_dynarray_init(&pending, NULL);
+
       bi_foreach_instr_in_block_safe(block, I) {
          if (I->op != BI_OPCODE_PHI)
             break;
@@ -1038,6 +1061,16 @@ bi_out_of_ssa(bi_context *ctx)
          /* Assign a register for the phi */
          bi_index reg = bi_temp(ctx);
          assert(reg.value >= first_reg);
+
+         /* A store at the end of a predecessor that can also branch elsewhere
+          * would clobber the slot on that path too, so only when every edge
+          * into the block is the predecessor's only way out.
+          */
+         bool direct = phi_mem_direct && I->dest[0].memory;
+         bi_foreach_predecessor(block, pred) {
+            if (bi_num_successors(*pred) != 1)
+               direct = false;
+         }
 
          /* Lower to a move in each predecessor. The destinations
           * cannot interfere so these can be sequentialized
@@ -1050,6 +1083,19 @@ bi_out_of_ssa(bi_context *ctx)
             assert(!I->src[i].abs);
             assert(!I->src[i].neg);
             assert(I->src[i].swizzle == BI_SWIZZLE_H01);
+
+            if (direct) {
+               /* The slot already holds this value */
+               if (I->src[i].memory && I->src[i].value == I->dest[0].value)
+                  continue;
+
+               if (I->src[i].type == BI_INDEX_NORMAL && !I->src[i].memory) {
+                  struct phi_mem_store st = {*pred, I->src[i], words,
+                                             I->dest[0].value};
+                  util_dynarray_append(&pending, st);
+                  continue;
+               }
+            }
 
             if (I->src[i].memory)
                /* spilled register, need to un-spill */
@@ -1064,6 +1110,16 @@ bi_out_of_ssa(bi_context *ctx)
                }
             } else
                bi_mov_words_to(&b, reg, I->src[i], words);
+
+            if (direct) {
+               struct phi_mem_store st = {*pred, reg, words, I->dest[0].value};
+               util_dynarray_append(&pending, st);
+            }
+         }
+
+         if (direct) {
+            bi_remove_instruction(I);
+            continue;
          }
 
          /* Replace the phi with a move */
@@ -1096,6 +1152,14 @@ bi_out_of_ssa(bi_context *ctx)
             }
          }
       }
+
+      /* Spilled phi destinations: store at the end of each predecessor, after
+       * every load and move the block's phis emitted there */
+      util_dynarray_foreach(&pending, struct phi_mem_store, st) {
+         bi_builder b = bi_init_builder(ctx, bi_after_block_logical(st->pred));
+         bi_store_tl(&b, st->words * 32, st->val, st->offset);
+      }
+      util_dynarray_fini(&pending);
    }
 
    /* Try to locally propagate the moves we created. We need to be extra
