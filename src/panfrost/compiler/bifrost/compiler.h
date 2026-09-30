@@ -964,6 +964,9 @@ struct bi_scoreboard_state {
    /* Nonregister dependencies present by a slot */
    uint8_t varying : BI_NUM_SLOTS;
    uint8_t memory : BI_NUM_SLOTS;
+
+   /* Subset of memory with an outstanding store or atomic */
+   uint8_t memory_write : BI_NUM_SLOTS;
 };
 
 typedef struct bi_block {

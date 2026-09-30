@@ -124,6 +124,20 @@ bi_is_memory_access(const bi_instr *I)
    }
 }
 
+/* A memory access that only reads memory */
+static bool
+bi_is_memory_read(const bi_instr *I)
+{
+   switch (I->op) {
+   case BI_OPCODE_LD_ATTR_TEX:
+   case BI_OPCODE_LD_TEX:
+   case BI_OPCODE_LD_TEX_IMM:
+      return true;
+   default:
+      return bi_get_opcode_props(I)->message == BIFROST_MESSAGE_LOAD;
+   }
+}
+
 /* Update the scoreboard model to assign an instruction to a given slot */
 
 static void
@@ -132,8 +146,12 @@ bi_push_instr(struct bi_scoreboard_state *st, bi_instr *I)
    if (bi_get_opcode_props(I)->sr_write)
       st->write[I->slot] |= bi_write_mask(I);
 
-   if (bi_is_memory_access(I))
+   if (bi_is_memory_access(I)) {
       st->memory |= BITFIELD_BIT(I->slot);
+
+      if (!bi_is_memory_read(I))
+         st->memory_write |= BITFIELD_BIT(I->slot);
+   }
 
    if (bi_get_opcode_props(I)->message == BIFROST_MESSAGE_VARYING)
       st->varying |= BITFIELD_BIT(I->slot);
@@ -145,6 +163,7 @@ bi_pop_slot(struct bi_scoreboard_state *st, unsigned slot)
    st->write[slot] = 0;
    st->varying &= ~BITFIELD_BIT(slot);
    st->memory &= ~BITFIELD_BIT(slot);
+   st->memory_write &= ~BITFIELD_BIT(slot);
 
    return BITFIELD_BIT(slot);
 }
@@ -184,9 +203,19 @@ bi_set_dependencies(bi_block *block, bi_instr *I,
          I->flow |= bi_pop_slot(st, slot);
    }
 
-   /* For now, serialize all memory access */
+   /* Order memory accesses against stores and atomics. Two loads need no
+    * ordering, so with PAN_LOAD_MLP a load only waits for outstanding writes,
+    * letting several loads be in flight at once. Otherwise, serialize all
+    * memory access.
+    */
+   static int load_mlp = -1;
+   if (load_mlp < 0)
+      load_mlp = getenv("PAN_LOAD_MLP") != NULL;
+
    if (bi_is_memory_access(I)) {
-      u_foreach_bit(slot, st->memory)
+      uint8_t deps = (load_mlp && bi_is_memory_read(I)) ? st->memory_write
+                                                         : st->memory;
+      u_foreach_bit(slot, deps)
          I->flow |= bi_pop_slot(st, slot);
    }
 
@@ -228,6 +257,8 @@ scoreboard_block_update(bi_context *ctx, bi_block *blk)
          blk->scoreboard_in.write[i] |= (*pred)->scoreboard_out.write[i];
          blk->scoreboard_in.varying |= (*pred)->scoreboard_out.varying;
          blk->scoreboard_in.memory |= (*pred)->scoreboard_out.memory;
+         blk->scoreboard_in.memory_write |=
+            (*pred)->scoreboard_out.memory_write;
       }
    }
 
