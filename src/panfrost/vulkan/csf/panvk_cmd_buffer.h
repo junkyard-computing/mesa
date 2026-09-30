@@ -902,6 +902,15 @@ panvk_per_arch(calculate_task_axis_and_increment)(
    wgs_per_task = threads_per_task / threads_per_wg;
    wgs_per_task = CLAMP(wgs_per_task, 1, wgs_per_core);
 
+   /* TEMP measurement knob (PAN_TASK_INC1_MIN_THREADS=n): workgroups of at
+    * least n threads get one workgroup per task. Coarser tasks leave cores idle
+    * at the end of dispatches of big multi-warp workgroups (llama q5_0 128x128
+    * MMQ: 87.7% -> 95.8% core-active, 40.6 -> 35.6 ms), while single-warp
+    * workgroups need the coarser tasks. */
+   const char *inc1_env = getenv("PAN_TASK_INC1_MIN_THREADS");
+   if (inc1_env && threads_per_wg >= (unsigned)atoi(inc1_env))
+      wgs_per_task = 1;
+
    *task_axis = MALI_TASK_AXIS_X;
    *task_increment = wgs_per_task;
    for (unsigned i = 0; i < 2; i++) {
