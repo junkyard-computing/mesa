@@ -205,13 +205,42 @@ calculate_pressure_delta(bi_instr *I, BITSET_WORD *live)
  * Choose the next instruction, bottom-up. For now we use a simple greedy
  * heuristic: choose the instruction that has the best effect on liveness.
  */
+static bool
+is_hoistable_load(bi_instr *I)
+{
+   return bi_get_opcode_props(I)->message == BIFROST_MESSAGE_LOAD;
+}
+
+/*
+ * With defer_loads, memory loads are only chosen once nothing else is ready.
+ * Since we schedule bottom-up, that places them (and the address arithmetic
+ * only they consume) as early in the block as their dependencies allow, so a
+ * warp has several loads in flight instead of stalling on each one right
+ * before its use.
+ */
 static struct sched_node *
-choose_instr(struct sched_ctx *s)
+choose_instr(struct sched_ctx *s, bool defer_loads)
 {
    int32_t min_delta = INT32_MAX;
    struct sched_node *best = NULL;
 
+   if (defer_loads) {
+      bool only_loads = true;
+
+      list_for_each_entry(struct sched_node, n, &s->dag->heads, dag.link) {
+         if (!is_hoistable_load(n->instr)) {
+            only_loads = false;
+            break;
+         }
+      }
+
+      defer_loads = !only_loads;
+   }
+
    list_for_each_entry(struct sched_node, n, &s->dag->heads, dag.link) {
+      if (defer_loads && is_hoistable_load(n->instr))
+         continue;
+
       int32_t delta = calculate_pressure_delta(n->instr, s->live);
 
       if (delta < min_delta) {
@@ -249,8 +278,18 @@ pressure_schedule_block(bi_context *ctx, bi_block *block, struct sched_ctx *s)
    struct sched_node **schedule = calloc(nr_ins, sizeof(struct sched_node *));
    nr_ins = 0;
 
+   /* PAN_LOAD_HOIST=n: hoist loads while pressure stays within n registers
+    * of the block's original peak. */
+   static int hoist_budget = -2;
+   if (hoist_budget == -2) {
+      const char *env = getenv("PAN_LOAD_HOIST");
+      hoist_budget = env ? atoi(env) : -1;
+   }
+   signed cap = orig_max_pressure + hoist_budget;
+
    while (!list_is_empty(&s->dag->heads)) {
-      struct sched_node *node = choose_instr(s);
+      struct sched_node *node =
+         choose_instr(s, hoist_budget >= 0 && pressure < cap);
       pressure += calculate_pressure_delta(node->instr, s->live);
       max_pressure = MAX2(pressure, max_pressure);
       dag_prune_head(s->dag, &node->dag);
@@ -259,8 +298,11 @@ pressure_schedule_block(bi_context *ctx, bi_block *block, struct sched_ctx *s)
       bi_liveness_ins_update_ssa(s->live, node->instr);
    }
 
-   /* Bail if it looks like it's worse */
-   if (max_pressure >= orig_max_pressure) {
+   /* Bail if it looks like it's worse. When hoisting loads, spending up to
+    * the budget is the point; the cap is only checked before each choice, so
+    * allow the last instruction's worth of overshoot too. */
+   if (hoist_budget >= 0 ? max_pressure > cap + 4
+                         : max_pressure >= orig_max_pressure) {
       free(schedule);
       return;
    }
