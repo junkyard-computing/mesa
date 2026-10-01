@@ -6,6 +6,10 @@
  */
 
 #include <errno.h>
+#include <inttypes.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
 #include <fcntl.h>
 #include <string.h>
 #include <xf86drm.h>
@@ -1231,6 +1235,27 @@ panthor_kmod_vm_bind(struct pan_kmod_vm *vm, enum pan_kmod_vm_op_mode mode,
    ret = pan_kmod_ioctl(vm->dev->fd, DRM_IOCTL_PANTHOR_VM_BIND, &req);
    if (ret)
       mesa_loge("DRM_IOCTL_PANTHOR_VM_BIND failed (err=%d)", errno);
+
+   /* LOCAL DEBUG: PAN_TRACE_VM=1 logs every map/unmap with a CLOCK_MONOTONIC
+    * timestamp (the clock dmesg uses), to match a GPU page fault's VA and
+    * time against the mappings around it. */
+   if (getenv("PAN_TRACE_VM")) {
+      struct timespec ts;
+      clock_gettime(CLOCK_MONOTONIC, &ts);
+      for (uint32_t i = 0; i < op_count; i++) {
+         uint32_t type = bind_ops[i].flags & DRM_PANTHOR_VM_BIND_OP_TYPE_MASK;
+         if (type == DRM_PANTHOR_VM_BIND_OP_TYPE_SYNC_ONLY)
+            continue;
+         fprintf(stderr, "VMTRACE %ld.%06ld %s va=0x%" PRIx64 "..0x%" PRIx64
+                 " size=0x%" PRIx64 " %s%s\n",
+                 (long)ts.tv_sec, ts.tv_nsec / 1000,
+                 type == DRM_PANTHOR_VM_BIND_OP_TYPE_MAP ? "MAP  " : "UNMAP",
+                 (uint64_t)bind_ops[i].va,
+                 (uint64_t)(bind_ops[i].va + bind_ops[i].size),
+                 (uint64_t)bind_ops[i].size, async ? "async" : "sync",
+                 ret ? " FAILED" : "");
+      }
+   }
 
    if (!ret && va_collect_cnt) {
       assert(&cur_va_collect->node == &va_collect_list);
