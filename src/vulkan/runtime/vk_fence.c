@@ -241,6 +241,8 @@ vk_common_GetFenceStatus(VkDevice _device,
                                   0 /* wait_value */,
                                   VK_SYNC_WAIT_COMPLETE,
                                   0 /* abs_timeout_ns */);
+   if (result != VK_TIMEOUT && vk_dbgtrace_on())
+      vk_dbgtrace("GETFENCE fence=%p result=%d", (void *)(uintptr_t)_fence, result);
    if (result == VK_TIMEOUT)
       return VK_NOT_READY;
    else
