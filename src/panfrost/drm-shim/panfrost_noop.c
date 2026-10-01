@@ -189,7 +189,13 @@ panthor_ioctl_dev_query(int fd, unsigned long request, void *arg)
       gpu_info->coherency_features = 0;
       gpu_info->texture_features[0] = 0xc1ffff9e;
       gpu_info->as_present = 0xff;
-      gpu_info->shader_present = 0x50005;
+      /* LOCAL DEBUG: PAN_SHADER_PRESENT=<hex> mimics a real core mask (e.g.
+       * felix's Mali-G710 MC7 is 0x1110055), so applications that size work
+       * by core count pick the same shader variants they do on hardware. */
+      gpu_info->shader_present =
+         os_get_option("PAN_SHADER_PRESENT")
+            ? strtoull(os_get_option("PAN_SHADER_PRESENT"), NULL, 16)
+            : 0x50005;
       gpu_info->l2_present = 1;
       gpu_info->tiler_present = 1;
       return 0;

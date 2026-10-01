@@ -4604,7 +4604,9 @@ bi_compile_variant_nir(nir_shader *nir,
 
    if ((bifrost_debug & (BIFROST_DBG_SHADERDB|BIFROST_DBG_STATSFULL))
        && !skip_internal) {
-      const char *prefix = bi_shader_stage_name(ctx);
+      /* LOCAL DEBUG: a label set by the SPIR-V dump hook identifies the module. */
+      const char *prefix = ctx->nir->info.label ? ctx->nir->info.label
+                                                : bi_shader_stage_name(ctx);
       if (bifrost_debug & BIFROST_DBG_STATSFULL) {
          pan_stats_verbose(stderr, prefix, ctx, stats, pinfo);
       } else {

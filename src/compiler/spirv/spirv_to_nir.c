@@ -7915,6 +7915,9 @@ spirv_to_nir(const uint32_t *words, size_t word_count,
       char blake3_str[BLAKE3_HEX_LEN];
       _mesa_blake3_format(blake3_str, b->shader->info.source_blake3);
       vtn_dump_shader(b, dump_path, blake3_str);
+      /* LOCAL DEBUG: name the shader after its dump file, so per-shader compiler
+       * stats can be matched to it even when pipelines compile concurrently. */
+      b->shader->info.label = ralloc_asprintf(b->shader, "0x%s", blake3_str);
 
       /* LOCAL DEBUG (not for upstream): also record the specialization constants, so a
        * dumped module can be recompiled exactly as the application specialized it. */
@@ -7925,6 +7928,8 @@ spirv_to_nir(const uint32_t *words, size_t word_count,
             for (uint32_t j = 0; j < spec->entries[i].size; j++)
                h = (h ^ spec->entries[i].data[j]) * 1099511628211ull;
          }
+         b->shader->info.label = ralloc_asprintf(b->shader, "0x%s.%016" PRIx64,
+                                                 blake3_str, h);
          char fn[PATH_MAX];
          snprintf(fn, sizeof(fn), "%s/0x%s.%016" PRIx64 ".spec", dump_path, blake3_str, h);
          FILE *sf = fopen(fn, "w");
