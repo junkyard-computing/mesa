@@ -487,6 +487,74 @@ bi_scratch_array_size_align(const struct glsl_type *type, unsigned *size,
    }
 }
 
+/* Which indirectly-indexed per-thread arrays nir_lower_vars_to_scratch keeps
+ * in scratch. Arrays larger than the threshold always go (they could never
+ * stay in registers). TEMPORARY tuning knob (measurement):
+ * PAN_SCRATCH_ACCUM_BYTES=N also demotes smaller float arrays of at least N
+ * bytes when they are accumulator-like -- no more load sites than store sites,
+ * as in a read-modify-write accumulator (mul_mmq sums[]). Each element then
+ * costs about one load and one store per iteration, and the registers it frees
+ * stop the heavily reused arrays (the mul_mmq struct caches, ~15 reads per
+ * element per iteration) from being spilled and refilled scalar by scalar.
+ * Arrays written once and read many times (flash attention's Sf scores) are
+ * left in registers: in scratch every one of those reads becomes a load.
+ */
+struct bi_scratch_choice {
+   nir_shader *nir;
+   int threshold;
+   unsigned accum_bytes;
+};
+
+static bool
+bi_scratch_accumulator_like(nir_shader *nir, nir_variable *var)
+{
+   unsigned loads = 0, stores = 0;
+
+   nir_foreach_function_impl(impl, nir) {
+      nir_foreach_block(block, impl) {
+         nir_foreach_instr(instr, block) {
+            if (instr->type != nir_instr_type_intrinsic)
+               continue;
+            nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+            if (intr->intrinsic != nir_intrinsic_load_deref &&
+                intr->intrinsic != nir_intrinsic_store_deref)
+               continue;
+            if (nir_deref_instr_get_variable(nir_src_as_deref(intr->src[0])) != var)
+               continue;
+            if (intr->intrinsic == nir_intrinsic_load_deref)
+               loads++;
+            else
+               stores++;
+         }
+      }
+   }
+
+   return loads <= stores;
+}
+
+static void
+bi_scratch_choose(struct util_dynarray *vars, void *data)
+{
+   struct bi_scratch_choice *c = data;
+
+   util_dynarray_foreach(vars, nir_variable *, var_ptr) {
+      nir_variable *var = *var_ptr;
+      unsigned size, align;
+      glsl_get_natural_size_align_bytes(var->type, &size, &align);
+
+      if (size > c->threshold)
+         continue;
+
+      const struct glsl_type *leaf = glsl_without_array(var->type);
+      if (c->accum_bytes && size >= c->accum_bytes &&
+          glsl_type_is_vector_or_scalar(leaf) && glsl_type_is_float(leaf) &&
+          bi_scratch_accumulator_like(c->nir, var))
+         continue;
+
+      var->data.pass_flags = false;
+   }
+}
+
 void
 bifrost_preprocess_nir(nir_shader *nir, uint64_t gpu_id)
 {
@@ -529,9 +597,14 @@ bifrost_preprocess_nir(nir_shader *nir, uint64_t gpu_id)
    /* TEMPORARY tuning knob (not for upstream) */
    const char *thr_env = getenv("PAN_SCRATCH_ARRAY_BYTES");
    int scratch_array_bytes = thr_env ? atoi(thr_env) : 256;
-   NIR_PASS(_, nir, nir_lower_vars_to_scratch, scratch_array_bytes,
-            glsl_get_natural_size_align_bytes,
-            bi_scratch_array_size_align);
+   const char *accum_env = getenv("PAN_SCRATCH_ACCUM_BYTES");
+   struct bi_scratch_choice choice = {
+      .nir = nir,
+      .threshold = scratch_array_bytes,
+      .accum_bytes = accum_env ? atoi(accum_env) : 0,
+   };
+   NIR_PASS(_, nir, nir_lower_vars_to_scratch_global,
+            bi_scratch_array_size_align, bi_scratch_choose, &choice);
 
    bi_optimize_loop(nir, gpu_id, true /* allow_copies */);
 
