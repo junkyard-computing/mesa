@@ -996,6 +996,60 @@ panvk_compile_nir(struct panvk_device *dev, nir_shader *nir,
    const bool dump_asm =
       shader_flags & VK_SHADER_CREATE_CAPTURE_INTERNAL_REPRESENTATIONS_BIT_MESA;
 
+   /* TEMPORARY (measurement): PAN_SHARED_VEC_PICK=1 compiles a compute shader
+    * with and without shared-memory vectorization and keeps the variant with
+    * the lower estimated cycle count. Wider shared loads cut load/store
+    * traffic in most of llama's mul_mmq tiles (q4_K/q6_K/q8_0: -22..-33%
+    * cycles) but raise register pressure, and in a shader already at the
+    * register limit (the q5_0 l-tile) they tip it into heavy spilling (+32%).
+    * Each variant compiles from its own NIR clone into its own copy of the
+    * shader state; only the CPU-side compile outputs (binary, dumps) exist at
+    * this point, so the loser is freed without trace.
+    */
+   if (nir->info.stage == MESA_SHADER_COMPUTE &&
+       compile_input->shared_vectorize == PAN_SHARED_VEC_DEFAULT &&
+       getenv("PAN_SHARED_VEC_PICK")) {
+      struct pan_compile_inputs in_on = *compile_input, in_off = *compile_input;
+      in_on.shared_vectorize = PAN_SHARED_VEC_ON;
+      in_off.shared_vectorize = PAN_SHARED_VEC_OFF;
+
+      nir_shader *alt_nir = nir_shader_clone(NULL, nir);
+      struct panvk_shader_variant alt = *shader;
+      VkResult alt_res = panvk_compile_nir(dev, alt_nir, shader_flags, &in_on,
+                                           state, noperspective_varyings,
+                                           desc_info, &alt);
+      VkResult res = panvk_compile_nir(dev, nir, shader_flags, &in_off, state,
+                                       noperspective_varyings, desc_info,
+                                       shader);
+      ralloc_free(alt_nir);
+
+      bool take_alt = alt_res == VK_SUCCESS &&
+         (res != VK_SUCCESS ||
+          (alt.info.stats.isa == PAN_STAT_VALHALL &&
+           shader->info.stats.isa == PAN_STAT_VALHALL &&
+           alt.info.stats.valhall.cycles < shader->info.stats.valhall.cycles));
+
+      if (atoi(getenv("PAN_SHARED_VEC_PICK")) >= 2 &&
+          alt.info.stats.isa == PAN_STAT_VALHALL)
+         fprintf(stderr, "PAN_SHARED_VEC_PICK %s: shared-vec on %.1f cycles, off %.1f -> %s\n",
+                 nir->info.label ? nir->info.label : "?",
+                 alt.info.stats.valhall.cycles,
+                 shader->info.stats.valhall.cycles, take_alt ? "on" : "off");
+
+      struct panvk_shader_variant *loser = take_alt ? shader : &alt;
+      free((void *)loser->bin_ptr);
+      free((void *)loser->nir_str);
+      free((void *)loser->asm_str);
+#if PAN_ARCH < 9
+      free((void *)loser->data_ptr);
+#endif
+      if (take_alt) {
+         *shader = alt;
+         return VK_SUCCESS;
+      }
+      return res;
+   }
+
    /* We're going to modify this so make our own copy to be nicer to callers */
    struct pan_compile_inputs input = *compile_input;
 

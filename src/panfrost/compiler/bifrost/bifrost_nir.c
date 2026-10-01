@@ -1167,9 +1167,14 @@ bifrost_postprocess_nir(nir_shader *nir,
     * test case: dEQP-VK.subgroups.ballot_broadcast.compute.subgroupbroadcast_u8vec3
     * TODO: Fix RA and re-enable temp vectorization.
     */
+   /* TEMP knobs: PAN_NO_VEC_SHARED, unless overridden per compile */
+   bool vec_shared = !(getenv("PAN_NO_VEC_SHARED") && !getenv("PAN_VEC_SHARED_MAX"));
+   if (inputs->shared_vectorize != PAN_SHARED_VEC_DEFAULT)
+      vec_shared = inputs->shared_vectorize == PAN_SHARED_VEC_ON;
+
    nir_load_store_vectorize_options vectorize_opts = {
       .modes = nir_var_mem_global |
-               (getenv("PAN_NO_VEC_SHARED") && !getenv("PAN_VEC_SHARED_MAX") ? 0 : nir_var_mem_shared) | /* TEMP knob */
+               (vec_shared ? nir_var_mem_shared : 0) |
                nir_var_mem_ubo /* | nir_var_mem_temp */ |
                /* TEMP measurement knob, not for upstream */
                (getenv("PAN_VEC_TEMP") ? nir_var_shader_temp : 0),

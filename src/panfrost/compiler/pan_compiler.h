@@ -48,6 +48,17 @@ struct pan_compile_inputs {
     * checks. */
    bool robust_descriptors;
 
+   /* TEMPORARY (measurement): whether shared-memory loads/stores are
+    * vectorized. PAN_SHARED_VEC_DEFAULT keeps the existing behaviour; the
+    * others force it, so a driver can compile both ways and keep the better
+    * variant (PanVK's PAN_SHARED_VEC_PICK).
+    */
+   enum {
+      PAN_SHARED_VEC_DEFAULT = 0,
+      PAN_SHARED_VEC_OFF,
+      PAN_SHARED_VEC_ON,
+   } shared_vectorize;
+
    /* Varying layout in memory, if known */
    const struct pan_varying_layout *varying_layout;
 
