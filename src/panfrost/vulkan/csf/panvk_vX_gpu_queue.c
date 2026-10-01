@@ -10,6 +10,7 @@
 #include "genxml/decode.h"
 
 #include "panvk_buffer.h"
+#include "panvk_dbgtrace.h"
 #include "panvk_cmd_buffer.h"
 #include "panvk_device_memory.h"
 #include "panvk_macros.h"
@@ -1376,7 +1377,15 @@ panvk_per_arch(gpu_queue_submit)(struct vk_queue *vk_queue, struct vk_queue_subm
    panvk_queue_submit_init_cmdbufs(&submit, vk_submit);
    panvk_queue_submit_init_signals(&submit, vk_submit);
 
+   if (panvk_dbgtrace_on()) {
+      for (uint32_t i = 0; i < vk_submit->command_buffer_count; i++)
+         panvk_dbgtrace("SUBMIT queue=%p cmdbuf=%p", (void *)vk_queue,
+                        (void *)vk_submit->command_buffers[i]);
+   }
    result = panvk_queue_submit_ioctl(&submit);
+   if (panvk_dbgtrace_on())
+      panvk_dbgtrace("SUBMITTED queue=%p n=%u result=%d", (void *)vk_queue,
+                     vk_submit->command_buffer_count, result);
    if (result != VK_SUCCESS)
       goto out;
 

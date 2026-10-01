@@ -7,6 +7,9 @@
 #include "panvk_device.h"
 #include "panvk_mempool.h"
 #include "panvk_priv_bo.h"
+#include "panvk_dbgtrace.h"
+
+#include <inttypes.h>
 
 #include "kmod/pan_kmod.h"
 
@@ -40,6 +43,7 @@ panvk_pool_alloc_backing(struct panvk_pool *pool, size_t sz)
    size_t bo_sz = ALIGN_POT(MAX2(pool->base.slab_size, sz),
                             panvk_get_gpu_page_size(pool->dev));
    struct panvk_priv_bo *bo = NULL;
+   const char *src = "NEW";
 
    /* If there's a free BO in our BO pool, let's pick it. */
    if (pool->bo_pool && bo_sz == pool->base.slab_size &&
@@ -47,6 +51,7 @@ panvk_pool_alloc_backing(struct panvk_pool *pool, size_t sz)
       bo =
          list_first_entry(&pool->bo_pool->free_bos, struct panvk_priv_bo, node);
       list_del(&bo->node);
+      src = "REUSE";
    } else {
       if (pool->big_bo_pool) {
          list_for_each_entry_safe(struct panvk_priv_bo, pooled_bo,
@@ -56,6 +61,7 @@ panvk_pool_alloc_backing(struct panvk_pool *pool, size_t sz)
             if (picked_bo_sz >= bo_sz) {
                bo = pooled_bo;
                list_del(&bo->node);
+               src = "REUSEBIG";
                break;
             }
          }
@@ -88,6 +94,13 @@ panvk_pool_alloc_backing(struct panvk_pool *pool, size_t sz)
 
    if (bo == NULL)
       return NULL;
+
+   if (panvk_dbgtrace_on())
+      panvk_dbgtrace("%s pool=%p label=%s owns=%d va=0x%" PRIx64 " size=0x%zx",
+                     src, (void *)pool,
+                     pool->props.label ? pool->props.label : "?",
+                     pool->props.owns_bos, (uint64_t)bo->addr.dev,
+                     (size_t)pan_kmod_bo_size(bo->bo));
 
    if (pool->props.owns_bos) {
       if (pan_kmod_bo_size(bo->bo) == pool->base.slab_size)
@@ -216,6 +229,21 @@ panvk_pool_init(struct panvk_pool *pool, struct panvk_device *dev,
 void
 panvk_pool_reset(struct panvk_pool *pool)
 {
+   if (panvk_dbgtrace_on()) {
+      const char *label = pool->props.label ? pool->props.label : "?";
+      list_for_each_entry(struct panvk_priv_bo, bo, &pool->bos, node)
+         panvk_dbgtrace("RETURN pool=%p label=%s va=0x%" PRIx64 " size=0x%zx",
+                        (void *)pool, label, (uint64_t)bo->addr.dev,
+                        (size_t)pan_kmod_bo_size(bo->bo));
+      list_for_each_entry(struct panvk_priv_bo, bo, &pool->big_bos, node)
+         panvk_dbgtrace("RETURN pool=%p label=%s va=0x%" PRIx64 " size=0x%zx",
+                        (void *)pool, label, (uint64_t)bo->addr.dev,
+                        (size_t)pan_kmod_bo_size(bo->bo));
+      if (pool->transient_bo)
+         panvk_dbgtrace("RESETPOOL pool=%p label=%s transient=0x%" PRIx64,
+                        (void *)pool, label,
+                        (uint64_t)pool->transient_bo->addr.dev);
+   }
    if (pool->bo_pool) {
       list_splicetail(&pool->bos, &pool->bo_pool->free_bos);
       list_inithead(&pool->bos);

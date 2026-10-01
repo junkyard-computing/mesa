@@ -22,6 +22,7 @@
  */
 
 #include "vk_queue.h"
+#include "vk_dbgtrace.h"
 
 #include "util/perf/cpu_trace.h"
 #include "util/u_debug.h"
@@ -1486,6 +1487,9 @@ vk_common_QueueWaitIdle(VkQueue _queue)
 
    result = vk_sync_wait(queue->base.device, sync, 0,
                          VK_SYNC_WAIT_COMPLETE, UINT64_MAX);
+
+   if (vk_dbgtrace_on())
+      vk_dbgtrace("QUEUEIDLE queue=%p result=%d", (void *)queue, result);
 
    vk_sync_destroy(queue->base.device, sync);
 

@@ -22,6 +22,7 @@
  */
 
 #include "vk_fence.h"
+#include "vk_dbgtrace.h"
 
 #include "util/os_time.h"
 #include "util/perf/cpu_trace.h"
@@ -281,6 +282,12 @@ vk_common_WaitForFences(VkDevice _device,
 
    VkResult result = vk_sync_wait_many(device, fenceCount, waits,
                                        wait_flags, abs_timeout_ns);
+
+   if (vk_dbgtrace_on()) {
+      for (uint32_t i = 0; i < fenceCount; i++)
+         vk_dbgtrace("WAITFENCE fence=%p all=%d timeout=%" PRIu64 " result=%d",
+                     (void *)(uintptr_t)pFences[i], waitAll, timeout, result);
+   }
 
    STACK_ARRAY_FINISH(waits);
 

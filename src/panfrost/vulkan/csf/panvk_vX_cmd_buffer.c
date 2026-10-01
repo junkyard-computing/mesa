@@ -30,6 +30,9 @@
 #include "panvk_priv_bo.h"
 #include "panvk_tracepoints.h"
 #include "panvk_utrace.h"
+#include "panvk_dbgtrace.h"
+
+#include <inttypes.h>
 
 #include "pan_desc.h"
 #include "pan_encoder.h"
@@ -64,6 +67,12 @@ emit_tls(struct panvk_cmd_buffer *cmdbuf)
    if (cmdbuf->state.tls.desc.cpu) {
       GENX(pan_emit_tls)(&cmdbuf->state.tls.info, cmdbuf->state.tls.desc.cpu);
    }
+
+   if (panvk_dbgtrace_on())
+      panvk_dbgtrace("EMITTLS cmdbuf=%p tls=0x%" PRIx64 " tlssize=%u desc=0x%" PRIx64,
+                     (void *)cmdbuf, (uint64_t)cmdbuf->state.tls.info.tls.ptr,
+                     cmdbuf->state.tls.info.tls.size,
+                     (uint64_t)cmdbuf->state.tls.desc.gpu);
 }
 
 /**
@@ -833,6 +842,11 @@ panvk_reset_cmdbuf(struct vk_command_buffer *vk_cmdbuf,
    struct panvk_cmd_pool *pool =
       container_of(vk_cmdbuf->pool, struct panvk_cmd_pool, vk);
    struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
+
+   if (panvk_dbgtrace_on())
+      panvk_dbgtrace("RESET cmdbuf=%p cs=%p desc=%p tls=%p", (void *)cmdbuf,
+                     (void *)&cmdbuf->cs_pool, (void *)&cmdbuf->desc_pool,
+                     (void *)&cmdbuf->tls_pool);
 
    vk_command_buffer_reset(&cmdbuf->vk);
 

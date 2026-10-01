@@ -22,6 +22,7 @@
  */
 
 #include "vk_semaphore.h"
+#include "vk_dbgtrace.h"
 
 #include "util/os_time.h"
 #include "util/perf/cpu_trace.h"
@@ -360,6 +361,13 @@ vk_common_WaitSemaphores(VkDevice _device,
 
    VkResult result = vk_sync_wait_many(device, wait_count, waits,
                                        wait_flags, abs_timeout_ns);
+
+   if (vk_dbgtrace_on()) {
+      for (uint32_t i = 0; i < wait_count; i++)
+         vk_dbgtrace("WAITSEM sem=%p value=%" PRIu64 " timeout=%" PRIu64 " result=%d",
+                     (void *)(uintptr_t)pWaitInfo->pSemaphores[i],
+                     pWaitInfo->pValues[i], timeout, result);
+   }
 
    STACK_ARRAY_FINISH(waits);
 
