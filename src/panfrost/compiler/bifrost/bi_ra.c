@@ -1400,6 +1400,8 @@ bi_register_allocate(bi_context *ctx)
       }
    }
 
+   const unsigned ssa_spill_bytes = spill_count;
+
    /* Lower tied operands. SSA is broken from here on. */
    unsigned first_reg = bi_out_of_ssa(ctx);
    bi_lower_vector(ctx, first_reg);
@@ -1436,6 +1438,29 @@ bi_register_allocate(bi_context *ctx)
 
          if (ctx->inputs->is_blend)
             UNREACHABLE("Blend shaders may not spill");
+
+         /* LOCAL DEBUG: PAN_RA_STATS=2 describes every fallback spill. */
+         if (getenv("PAN_RA_STATS") && atoi(getenv("PAN_RA_STATS")) >= 2) {
+            const char *fop = "?", *sop = "?";
+            unsigned fw = 0, sw = 0;
+            bi_foreach_instr_global(ctx, I) {
+               bi_foreach_dest(I, d) {
+                  if (I->dest[d].value == l->spill_node) {
+                     fop = bi_opcode_props[I->op].name;
+                     fw = bi_count_write_registers(I, d);
+                  }
+                  if (I->dest[d].value == (unsigned)spill_node) {
+                     sop = bi_opcode_props[I->op].name;
+                     sw = bi_count_write_registers(I, d);
+                  }
+               }
+            }
+            fprintf(stderr,
+                    "PAN_RA_FAIL it=%u fail=%u(%s w%u aff%u) spill=%u(%s w%u aff%u)\n",
+                    iter_count, l->spill_node, fop, fw,
+                    util_bitcount64(l->affinity[l->spill_node]), spill_node, sop,
+                    sw, util_bitcount64(l->affinity[spill_node]));
+         }
 
          spill_count =
             bi_spill_register(ctx, bi_get_index(spill_node), spill_count,
@@ -1486,6 +1511,12 @@ bi_register_allocate(bi_context *ctx)
          bi_coalesce_tied(ctx);
       }
    }
+
+   /* LOCAL DEBUG: PAN_RA_STATS=1 prints how hard RA had to work. */
+   if (getenv("PAN_RA_STATS"))
+      fprintf(stderr, "PAN_RA_STATS %s: demand=%u ssa_spill_bytes=%u fallback_iters=%u final_tls=%u\n",
+              ctx->nir->info.label ? ctx->nir->info.label : "?", ctx->ra_demand,
+              ssa_spill_bytes, iter_count, spill_count);
 
    compute_spill_cost(ctx);
 
