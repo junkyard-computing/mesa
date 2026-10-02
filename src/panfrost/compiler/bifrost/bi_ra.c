@@ -620,13 +620,21 @@ bi_rewrite_index_src_single(bi_instr *ins, bi_index old, bi_index new)
 /* If register allocation fails, find the best spill node */
 
 static signed
-bi_choose_spill_node(bi_context *ctx, struct lcra_state *l)
+bi_choose_spill_node(bi_context *ctx, struct lcra_state *l,
+                     const BITSET_WORD *exclude)
 {
    /* Pick a node satisfying bi_spill_register's preconditions */
    BITSET_WORD *no_spill = BITSET_CALLOC(l->node_count);
 
    bi_foreach_instr_global(ctx, ins) {
       bi_foreach_dest(ins, d) {
+         /* Temporaries created by a spill earlier in this RA iteration (an
+          * escalating spill picks several nodes per iteration) are past the
+          * interference graph; they are not candidates anyway.
+          */
+         if (ins->dest[d].value >= l->node_count)
+            continue;
+
          /* Don't allow spilling coverage mask writes because the
           * register preload logic assumes it will stay in the
           * cumulative coverage reg. This could be optimized.
@@ -649,7 +657,8 @@ bi_choose_spill_node(bi_context *ctx, struct lcra_state *l)
     * rather the ones interfering with it, if that would be
     * better
     */
-   if (!BITSET_TEST(no_spill, l->spill_node)) {
+   if (!BITSET_TEST(no_spill, l->spill_node) &&
+       !(exclude && BITSET_TEST(exclude, l->spill_node))) {
       best_node = l->spill_node;
       best_benefit = lcra_count_constraints(l, best_node);
    }
@@ -665,6 +674,9 @@ bi_choose_spill_node(bi_context *ctx, struct lcra_state *l)
             continue;
 
          if (BITSET_TEST(no_spill, i))
+            continue;
+
+         if (exclude && BITSET_TEST(exclude, i))
             continue;
 
          unsigned benefit = lcra_count_constraints(l, i);
@@ -684,6 +696,9 @@ bi_choose_spill_node(bi_context *ctx, struct lcra_state *l)
             continue;
 
          if (BITSET_TEST(no_spill, i))
+            continue;
+
+         if (exclude && BITSET_TEST(exclude, i))
             continue;
 
          unsigned benefit = lcra_count_constraints(l, i);
@@ -1403,6 +1418,10 @@ bi_register_allocate(bi_context *ctx)
       }
    }
 
+   const char *esc_env = getenv("PAN_RA_ESCALATE");
+   const unsigned esc_after = esc_env ? atoi(esc_env) : 4;
+   unsigned esc_last_fail = ~0, esc_run = 1, esc_repeats = 0;
+
    /* Otherwise, use the register file and spill until we succeed */
    while (!success && ((iter_count++) < max_iters)) {
       l = bi_allocate_registers(ctx, &success, true);
@@ -1410,7 +1429,7 @@ bi_register_allocate(bi_context *ctx)
       if (success) {
          ctx->info.work_reg_count = BI_MAX_REGS;
       } else {
-         signed spill_node = bi_choose_spill_node(ctx, l);
+         signed spill_node = bi_choose_spill_node(ctx, l, NULL);
 
          if (spill_node == -1)
             UNREACHABLE("Failed to choose spill node\n");
@@ -1421,6 +1440,43 @@ bi_register_allocate(bi_context *ctx)
          spill_count =
             bi_spill_register(ctx, bi_get_index(spill_node), spill_count,
                               bi_get_index(l->spill_node));
+
+         /* Escalating spill (fork default): when the same node fails
+          * again, its neighbourhood is short by more than one register, and
+          * spilling one interfering node per full RA iteration turns that
+          * into dozens of iterations. Spill twice as many of its interfering
+          * nodes each time it fails again in a row (up to 32). Starts after 4
+          * consecutive repeats, which leaves every llama MMQ tile and FA Br4/Br8
+          * kernel unchanged and cuts FA hsk=256 from 145 iterations to 34 with
+          * fewer spills. PAN_RA_ESCALATE=<n> starts after n repeats, 0 = off.
+          */
+         if (l->spill_node == esc_last_fail)
+            esc_repeats++;
+         else
+            esc_repeats = 0;
+
+         if (esc_after && esc_repeats >= esc_after) {
+            esc_run = MIN2(esc_run * 2, 32);
+
+            BITSET_WORD *chosen = BITSET_CALLOC(l->node_count);
+            BITSET_SET(chosen, spill_node);
+
+            for (unsigned k = 1; k < esc_run; ++k) {
+               signed extra = bi_choose_spill_node(ctx, l, chosen);
+               if (extra == -1)
+                  break;
+
+               BITSET_SET(chosen, extra);
+               spill_count =
+                  bi_spill_register(ctx, bi_get_index(extra), spill_count,
+                                    bi_get_index(l->spill_node));
+            }
+
+            free(chosen);
+         } else {
+            esc_run = 1;
+         }
+         esc_last_fail = l->spill_node;
 
          lcra_free(l);
          l = NULL;
