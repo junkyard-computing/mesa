@@ -230,17 +230,13 @@ mem_vectorize_cb(unsigned align_mul, unsigned align_offset, unsigned bit_size,
        bytes > (unsigned)atoi(shared_max))
       return false;
 
-   const unsigned combined_align = nir_combined_align(align_mul, align_offset);
-
-   /* Valhall+ (v9+) supports unaligned load/store, so a wide access only
-    * needs to be 32-bit aligned, not naturally aligned. Below 32 bits that
-    * does not hold: on G710, merging two 16-bit loads into a 32-bit load at
-    * a 2-byte-aligned address raises CS_BUS_FAULT (ggml's q6_K mat-vec, whose
-    * 210-byte blocks leave 16-bit fields at odd halfword offsets).
+   /* Valhall+ (v9+) supports unaligned load/store, so we don't need the
+    * combined access to be naturally aligned.
     */
    if (pan_arch(gpu_id) >= 9)
-      return combined_align >= MIN2(bytes, 4);
+      return true;
 
+   const unsigned combined_align = nir_combined_align(align_mul, align_offset);
    return bytes <= combined_align;
 }
 
