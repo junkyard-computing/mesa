@@ -4489,22 +4489,27 @@ bi_compile_variant_nir(nir_shader *nir,
 
    bi_validate(ctx, "Late lowering");
 
-   /* TEMP tuning knob (not for upstream): PAN_REMAT=<min use span>, off when
-    * unset. Must run after the last CSE, which would undo it. */
+   /* Rematerialize cheap ALU chains near far-apart uses when the shader is
+    * far over the register budget (demand > 80 registers of 64): there each
+    * long-lived unpacked value is a spill, and recomputing it from operands
+    * that stay live anyway is cheaper (ggml q2_K MUL_MAT_ID on G710: 2.8 ->
+    * 8.7 GFLOPS; within noise elsewhere). Below that it only adds ALU. Must
+    * run after the last CSE, which would undo it.
+    * TEMP knobs (not for upstream): PAN_REMAT=<min use span> (0 disables;
+    * when set, the demand gate defaults to 0), PAN_REMAT_DEMAND=<n>. */
    const char *remat_env = getenv("PAN_REMAT");
-   if (likely(optimize) && remat_env && atoi(remat_env) > 0) {
-      /* Only worth it when the shader is well over the register budget;
-       * otherwise it just adds ALU. TEMP knob: PAN_REMAT_DEMAND. */
+   const unsigned remat_span = remat_env ? atoi(remat_env) : 1;
+   if (likely(optimize) && remat_span > 0) {
       bi_compute_liveness_ssa(ctx);
       unsigned demand = bi_calc_register_demand(ctx);
       const char *demand_env = getenv("PAN_REMAT_DEMAND");
-      unsigned min_demand = demand_env ? atoi(demand_env) : 0;
+      unsigned min_demand = demand_env ? atoi(demand_env) : (remat_env ? 0 : 80);
 
       if (getenv("PAN_REMAT_DEBUG"))
          fprintf(stderr, "remat: register demand %u (threshold %u)\n", demand,
                  min_demand);
 
-      if (demand > min_demand && bi_remat_alu_chains(ctx, atoi(remat_env))) {
+      if (demand > min_demand && bi_remat_alu_chains(ctx, remat_span)) {
          bi_opt_dce(ctx, false);
          bi_validate(ctx, "ALU chain rematerialization");
       }
