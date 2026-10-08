@@ -136,6 +136,32 @@ bi_remat_clone(bi_builder *b, const bi_instr *I)
    return J;
 }
 
+/* Clone a collected chain in front of cursor; returns the clone of its last
+ * instruction (the value that replaces the original). */
+static bi_index
+bi_remat_clone_chain(bi_context *ctx, bi_cursor cursor, bi_instr **chain,
+                     unsigned nchain)
+{
+   bi_builder b = bi_init_builder(ctx, cursor);
+   bi_index map_from[REMAT_MAX_CHAIN], map_to[REMAT_MAX_CHAIN];
+
+   for (unsigned c = 0; c < nchain; ++c) {
+      bi_instr *J = bi_remat_clone(&b, chain[c]);
+
+      bi_foreach_ssa_src(J, s) {
+         for (unsigned m = 0; m < c; ++m) {
+            if (J->src[s].value == map_from[m].value)
+               J->src[s] = bi_replace_index(J->src[s], map_to[m]);
+         }
+      }
+
+      map_from[c] = chain[c]->dest[0];
+      map_to[c] = J->dest[0];
+   }
+
+   return map_to[nchain - 1];
+}
+
 static bool
 bi_remat_block(struct remat_ctx *rc, bi_block *block, unsigned min_span)
 {
@@ -150,12 +176,24 @@ bi_remat_block(struct remat_ctx *rc, bi_block *block, unsigned min_span)
    bi_foreach_instr_in_block(block, I) {
       util_dynarray_append(&instrs, I);
       bi_foreach_ssa_dest(I, d) {
-         rc->pos[I->dest[d].value] = n;
+         /* Clones inserted by earlier blocks (cross-block remat) have values
+          * past the snapshot arrays; they are never looked up. */
+         if (I->dest[d].value < rc->nr_values)
+            rc->pos[I->dest[d].value] = n;
       }
       n++;
    }
 
-   if (n < 2 * min_span) {
+   /* TEMP knob (not for upstream): PAN_REMAT_XBLOCK=1 also rematerializes
+    * values used in other blocks, cloning the chain in front of the first use
+    * in each such block. Long-lived unpacked operands (e.g. ggml K-quant
+    * scales extracted once per superblock and used across the inner loop's
+    * blocks) are otherwise never touched. Phi uses still disqualify a value. */
+   static int xblock = -1;
+   if (xblock < 0)
+      xblock = getenv("PAN_REMAT_XBLOCK") != NULL;
+
+   if (!xblock && n < 2 * min_span) {
       util_dynarray_fini(&instrs);
       return false;
    }
@@ -167,6 +205,8 @@ bi_remat_block(struct remat_ctx *rc, bi_block *block, unsigned min_span)
    const unsigned nr_values = rc->nr_values;
    struct util_dynarray *uses = calloc(nr_values, sizeof(*uses));
    bool *foreign = calloc(nr_values, sizeof(bool));
+   bool *phi_use = calloc(nr_values, sizeof(bool));
+   struct util_dynarray *xuses = calloc(nr_values, sizeof(*xuses));
 
    bi_foreach_block(ctx, other) {
       bi_foreach_instr_in_block(other, I) {
@@ -174,8 +214,17 @@ bi_remat_block(struct remat_ctx *rc, bi_block *block, unsigned min_span)
             unsigned v = I->src[s].value;
             if (v >= nr_values || rc->def_block[v] != block)
                continue;
+            if (I->op == BI_OPCODE_PHI)
+               phi_use[v] = true;
             if (other != block || I->op == BI_OPCODE_PHI)
                foreign[v] = true;
+            if (other != block && I->op != BI_OPCODE_PHI) {
+               bi_instr *last = util_dynarray_num_elements(&xuses[v], bi_instr *)
+                                   ? *util_dynarray_top_ptr(&xuses[v], bi_instr *)
+                                   : NULL;
+               if (last != I)
+                  util_dynarray_append(&xuses[v], I);
+            }
          }
       }
    }
@@ -239,8 +288,48 @@ bi_remat_block(struct remat_ctx *rc, bi_block *block, unsigned min_span)
       unsigned v = V->dest[0].value;
       if (v >= nr_values)
          continue;
+
+      if (xblock && !phi_use[v] &&
+          util_dynarray_num_elements(&xuses[v], bi_instr *)) {
+         bi_instr *chain[REMAT_MAX_CHAIN];
+         unsigned nchain = 0, leaves = 0;
+
+         if (bi_remat_collect(rc, block, V, chain, &nchain, &leaves)) {
+            bi_block *cur_block = NULL;
+            bi_index cur = bi_null();
+
+            util_dynarray_foreach(&xuses[v], bi_instr *, Up) {
+               bi_instr *U = *Up;
+               bi_block *ub = NULL;
+
+               bi_foreach_block(ctx, bb) {
+                  bi_foreach_instr_in_block(bb, X) {
+                     if (X == U) {
+                        ub = bb;
+                        break;
+                     }
+                  }
+                  if (ub)
+                     break;
+               }
+
+               if (ub != cur_block) {
+                  cur = bi_remat_clone_chain(ctx, bi_before_instr(U), chain,
+                                             nchain);
+                  cur_block = ub;
+                  progress = true;
+               }
+
+               bi_foreach_ssa_src(U, s) {
+                  if (U->src[s].value == v)
+                     U->src[s] = bi_replace_index(U->src[s], cur);
+               }
+            }
+         }
+      }
+
       unsigned nu = util_dynarray_num_elements(&uses[v], unsigned);
-      if (foreign[v] || nu < 2)
+      if ((xblock ? phi_use[v] : foreign[v]) || nu < 2)
          continue;
 
       unsigned *u = util_dynarray_begin(&uses[v]);
@@ -293,6 +382,10 @@ bi_remat_block(struct remat_ctx *rc, bi_block *block, unsigned min_span)
       util_dynarray_fini(&uses[v]);
    free(uses);
    free(foreign);
+   for (unsigned v = 0; v < nr_values; ++v)
+      util_dynarray_fini(&xuses[v]);
+   free(xuses);
+   free(phi_use);
    util_dynarray_fini(&instrs);
    return progress;
 }
